@@ -31,8 +31,8 @@ const STATUS_STYLES: Record<string, string> = {
   void: "bg-orange-100 text-orange-600",
 };
 
-function fmt(amount: number, currency = "INR") {
-  return new Intl.NumberFormat("en-IN", {
+function fmt(amount: number, currency = "USD") {
+  return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency,
     maximumFractionDigits: 0,
@@ -41,7 +41,7 @@ function fmt(amount: number, currency = "INR") {
 
 function fmtDate(dateStr: string) {
   if (!dateStr) return "—";
-  return new Date(dateStr).toLocaleDateString("en-IN", {
+  return new Date(dateStr).toLocaleDateString("en-US", {
     day: "2-digit",
     month: "short",
     year: "numeric",

@@ -50,10 +50,13 @@ type SubModule = "invoices" | "sales_orders" | "estimates" | "payments" | "expen
 // ============================================
 // HELPERS
 // ============================================
-function fmt(amount: number, currency = "USD") {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency", currency, maximumFractionDigits: 0,
+function fmt(amount: number, currency?: string | null) {
+  const safeCurrency = currency || "INR";
+  try {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency", currency: safeCurrency, maximumFractionDigits: 0,
   }).format(amount);
+  } catch { return "₹" + Math.round(amount).toLocaleString("en-IN"); }
 }
 
 function fmtDate(d: string) {

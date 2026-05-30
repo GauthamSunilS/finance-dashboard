@@ -143,7 +143,7 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
 }
 
 // ============================================
-// INVOICES SUB-MODULE
+// INVOICES TAB
 // ============================================
 function InvoicesTab({ clientId }: { clientId: string }) {
   const [data, setData] = useState<Invoice[]>([]);
@@ -204,7 +204,9 @@ function InvoicesTab({ clientId }: { clientId: string }) {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((inv, i) => (
+              {filtered.length === 0 ? (
+                <tr><td colSpan={9} className="text-center py-10 text-zinc-500">No invoices found</td></tr>
+              ) : filtered.map((inv, i) => (
                 <tr key={inv.id} className={`border-b border-zinc-800/60 hover:bg-zinc-800/40 ${i % 2 === 0 ? "" : "bg-zinc-900/50"}`}>
                   <td className="px-4 py-3 font-mono text-zinc-400 text-xs">{inv.invoice_number}</td>
                   <td className="px-4 py-3 font-medium text-zinc-100 max-w-[160px] truncate">
@@ -232,7 +234,7 @@ function InvoicesTab({ clientId }: { clientId: string }) {
 }
 
 // ============================================
-// SALES ORDERS SUB-MODULE
+// SALES ORDERS TAB
 // ============================================
 function SalesOrdersTab({ clientId }: { clientId: string }) {
   const [data, setData] = useState<SalesOrder[]>([]);
@@ -298,7 +300,7 @@ function SalesOrdersTab({ clientId }: { clientId: string }) {
 }
 
 // ============================================
-// ESTIMATES SUB-MODULE
+// ESTIMATES TAB
 // ============================================
 function EstimatesTab({ clientId }: { clientId: string }) {
   const [data, setData] = useState<Estimate[]>([]);
@@ -365,7 +367,7 @@ function EstimatesTab({ clientId }: { clientId: string }) {
 }
 
 // ============================================
-// PAYMENTS SUB-MODULE
+// PAYMENTS TAB
 // ============================================
 function PaymentsTab({ clientId }: { clientId: string }) {
   const [data, setData] = useState<Payment[]>([]);
@@ -388,7 +390,7 @@ function PaymentsTab({ clientId }: { clientId: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-3">
         <SummaryCard label="Total Payments" value={`${filtered.length}`} color="text-white" />
         <SummaryCard label="Total Received" value={fmt(total)} color="text-emerald-400" />
       </div>
@@ -428,7 +430,7 @@ function PaymentsTab({ clientId }: { clientId: string }) {
 }
 
 // ============================================
-// EXPENSES SUB-MODULE
+// EXPENSES TAB
 // ============================================
 function ExpensesTab({ clientId }: { clientId: string }) {
   const [data, setData] = useState<Expense[]>([]);
@@ -451,7 +453,7 @@ function ExpensesTab({ clientId }: { clientId: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-3">
         <SummaryCard label="Total Expenses" value={`${filtered.length}`} color="text-white" />
         <SummaryCard label="Total Amount" value={fmt(total)} color="text-red-400" />
       </div>
@@ -503,7 +505,7 @@ const SUB_MODULES: { key: SubModule; label: string }[] = [
   { key: "expenses", label: "Expenses" },
 ];
 
-function ClientModule({ client, onBack, onSync }: { client: Client; onBack: () => void; onSync: (clientId: string) => Promise<void> }) {
+function ClientModule({ client, onBack }: { client: Client; onBack: () => void }) {
   const [activeTab, setActiveTab] = useState<SubModule>("invoices");
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
@@ -512,8 +514,23 @@ function ClientModule({ client, onBack, onSync }: { client: Client; onBack: () =
     setSyncing(true);
     setSyncMsg(null);
     try {
-      await onSync(client.id);
-      setSyncMsg("✓ Sync complete");
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/zoho-sync`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ client_id: client.id }),
+        }
+      );
+      const result = await res.json();
+      if (result.success) {
+        setSyncMsg(`✓ Synced ${result.total_records} records`);
+      } else {
+        setSyncMsg(`✗ ${result.error || "Sync failed"}`);
+      }
     } catch (e: any) {
       setSyncMsg(`✗ ${e.message}`);
     }
@@ -537,18 +554,20 @@ function ClientModule({ client, onBack, onSync }: { client: Client; onBack: () =
           </div>
           <div className="flex items-center gap-2">
             {syncMsg && <span className={`text-xs ${syncMsg.startsWith("✓") ? "text-emerald-400" : "text-red-400"}`}>{syncMsg}</span>}
-            <button onClick={handleSync} disabled={syncing}
-              className="text-xs px-3 py-1.5 rounded-md bg-blue-700 hover:bg-blue-600 text-white transition disabled:opacity-50">
-              {syncing ? "Syncing..." : "⟳ Sync Zoho"}
-            </button>
+            {client.source === "zoho" && (
+              <button onClick={handleSync} disabled={syncing}
+                className="text-xs px-3 py-1.5 rounded-md bg-blue-700 hover:bg-blue-600 text-white transition disabled:opacity-50">
+                {syncing ? "Syncing..." : "⟳ Sync Zoho"}
+              </button>
+            )}
           </div>
         </div>
 
         {/* Sub-module tabs */}
-        <div className="flex gap-1 bg-zinc-900 border border-zinc-800 rounded-xl p-1 w-fit">
+        <div className="flex gap-1 bg-zinc-900 border border-zinc-800 rounded-xl p-1 w-fit overflow-x-auto">
           {SUB_MODULES.map(m => (
             <button key={m.key} onClick={() => setActiveTab(m.key)}
-              className={`text-sm px-4 py-1.5 rounded-lg transition ${activeTab === m.key ? "bg-zinc-700 text-white" : "text-zinc-500 hover:text-zinc-300"}`}>
+              className={`text-sm px-4 py-1.5 rounded-lg transition whitespace-nowrap ${activeTab === m.key ? "bg-zinc-700 text-white" : "text-zinc-500 hover:text-zinc-300"}`}>
               {m.label}
             </button>
           ))}
@@ -571,31 +590,43 @@ function ClientModule({ client, onBack, onSync }: { client: Client; onBack: () =
 function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeClient, setActiveClient] = useState<Client | null>(null);
+  // Use URL hash to track active client — survives page refresh
+  const [activeClientId, setActiveClientId] = useState<string | null>(() => {
+    if (typeof window !== "undefined") {
+      const hash = window.location.hash.replace("#", "");
+      return hash || null;
+    }
+    return null;
+  });
 
   useEffect(() => {
     supabase.from("clients").select("*").order("name")
       .then(({ data }) => { setClients(data || []); setLoading(false); });
   }, []);
 
-  async function handleSync(clientId: string) {
-    const res = await fetch(
-      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/zoho-sync`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ client_id: clientId }),
-      }
-    );
-    const result = await res.json();
-    if (!result.success) throw new Error(result.error || "Sync failed");
-  }
+  // Sync hash with active client
+  useEffect(() => {
+    if (activeClientId) {
+      window.location.hash = activeClientId;
+    } else {
+      history.pushState("", document.title, window.location.pathname);
+    }
+  }, [activeClientId]);
+
+  // Listen for browser back/forward
+  useEffect(() => {
+    const onHashChange = () => {
+      const hash = window.location.hash.replace("#", "");
+      setActiveClientId(hash || null);
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  const activeClient = clients.find(c => c.id === activeClientId) || null;
 
   if (activeClient) {
-    return <ClientModule client={activeClient} onBack={() => setActiveClient(null)} onSync={handleSync} />;
+    return <ClientModule client={activeClient} onBack={() => setActiveClientId(null)} />;
   }
 
   return (
@@ -617,7 +648,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {clients.map(client => (
-              <button key={client.id} onClick={() => setActiveClient(client)}
+              <button key={client.id} onClick={() => setActiveClientId(client.id)}
                 className="text-left bg-zinc-900 border border-zinc-800 rounded-xl p-6 hover:border-zinc-600 hover:bg-zinc-800/60 transition group">
                 <div className="flex items-start justify-between">
                   <div>

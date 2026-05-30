@@ -120,6 +120,8 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -142,6 +144,32 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   async function handleLogout() {
     await supabase.auth.signOut();
     onLogout();
+  }
+
+  async function syncFromZoho() {
+    setSyncing(true);
+    setSyncMsg(null);
+    try {
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/zoho-sync`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`,
+          },
+        }
+      );
+      const result = await res.json();
+      if (result.success) {
+        setSyncMsg(`✓ Synced ${result.total_records} records`);
+        await fetchData();
+      } else {
+        setSyncMsg(`✗ ${result.error || "Sync failed"}`);
+      }
+    } catch (err: any) {
+      setSyncMsg(`✗ ${err.message}`);
+    }
+    setSyncing(false);
   }
 
   const statuses = ["all", ...Array.from(new Set(data.map((d) => d.status)))];
@@ -169,7 +197,19 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
             <h1 className="text-2xl font-bold tracking-tight text-white">Finance Dashboard</h1>
             <p className="text-zinc-400 text-sm mt-0.5">Zoho Books · Live data</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            {syncMsg && (
+              <span className={`text-xs ${syncMsg.startsWith("✓") ? "text-emerald-400" : "text-red-400"}`}>
+                {syncMsg}
+              </span>
+            )}
+            <button
+              onClick={syncFromZoho}
+              disabled={syncing}
+              className="text-xs px-3 py-1.5 rounded-md bg-blue-700 hover:bg-blue-600 text-white transition disabled:opacity-50"
+            >
+              {syncing ? "Syncing..." : "⟳ Sync Zoho"}
+            </button>
             <button
               onClick={fetchData}
               className="text-xs px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition"

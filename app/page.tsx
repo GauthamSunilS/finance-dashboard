@@ -1518,7 +1518,7 @@ function ClientModule({ client, onBack }: { client: Client; onBack: () => void }
         {/* Sub-module tabs */}
         <div className="flex gap-1 bg-zinc-900 border border-zinc-800 rounded-xl p-1 w-fit overflow-x-auto">
           {SUB_MODULES.map(m => (
-            <button key={m.key} onClick={() => { setActiveTab(m.key); sessionStorage.setItem("zxi_activeTab", m.key); const clientId = window.location.hash.replace("#","").split("|")[0]; window.location.hash = clientId + "|" + m.key; }}
+            <button key={m.key} onClick={() => { setActiveTab(m.key); sessionStorage.setItem("zxi_activeTab", m.key); }}
               className={`text-sm px-4 py-1.5 rounded-lg transition whitespace-nowrap ${activeTab === m.key ? "bg-zinc-700 text-white" : "text-zinc-500 hover:text-zinc-300"}`}>
               {m.label}
             </button>
@@ -1543,13 +1543,10 @@ function ClientModule({ client, onBack }: { client: Client; onBack: () => void }
 function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
-  // Use URL hash to track active client — survives page refresh
+  // Use sessionStorage to persist client and tab across refreshes
   const [activeClientId, setActiveClientId] = useState<string | null>(() => {
     if (typeof window !== "undefined") {
-      const parts = window.location.hash.replace("#", "").split("|");
-      // Also restore tab from hash
-      if (parts[1]) sessionStorage.setItem("zxi_activeTab", parts[1]);
-      return parts[0] || null;
+      return sessionStorage.getItem("zxi_clientId") || null;
     }
     return null;
   });
@@ -1559,25 +1556,14 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       .then(({ data }) => { setClients(data || []); setLoading(false); });
   }, []);
 
-  // Sync hash with active client
   useEffect(() => {
     if (activeClientId) {
-      const currentTab = sessionStorage.getItem("zxi_activeTab") || "invoices";
-      window.location.hash = activeClientId + "|" + currentTab;
+      sessionStorage.setItem("zxi_clientId", activeClientId);
     } else {
-      history.pushState(null, document.title, window.location.pathname);
+      sessionStorage.removeItem("zxi_clientId");
+      sessionStorage.removeItem("zxi_activeTab");
     }
   }, [activeClientId]);
-
-  // Listen for browser back/forward
-  useEffect(() => {
-    const onHashChange = () => {
-      const hash = window.location.hash.replace("#", "");
-      setActiveClientId(hash || null);
-    };
-    window.addEventListener("hashchange", onHashChange);
-    return () => window.removeEventListener("hashchange", onHashChange);
-  }, []);
 
   const activeClient = clients.find(c => c.id === activeClientId) || null;
 
@@ -1604,7 +1590,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {clients.map(client => (
-              <button key={client.id} onClick={() => setActiveClientId(client.id)}
+              <button key={client.id} onClick={() => { sessionStorage.setItem("zxi_clientId", client.id); setActiveClientId(client.id); }}
                 className="text-left bg-zinc-900 border border-zinc-800 rounded-xl p-6 hover:border-zinc-600 hover:bg-zinc-800/60 transition group">
                 <div className="flex items-start justify-between">
                   <div>

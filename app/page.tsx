@@ -1446,7 +1446,14 @@ const SUB_MODULES: { key: SubModule; label: string }[] = [
 ];
 
 function ClientModule({ client, onBack }: { client: Client; onBack: () => void }) {
-  const [activeTab, setActiveTab] = useState<SubModule>("invoices");
+  const [activeTab, setActiveTab] = useState<SubModule>(() => {
+    if (typeof window !== "undefined") {
+      const tab = window.location.hash.replace("#", "").split("|")[1];
+      const valid = ["invoices","sales_orders","estimates","payments","expenses","audit"];
+      return (valid.includes(tab) ? tab : "invoices") as SubModule;
+    }
+    return "invoices";
+  });
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
@@ -1506,7 +1513,7 @@ function ClientModule({ client, onBack }: { client: Client; onBack: () => void }
         {/* Sub-module tabs */}
         <div className="flex gap-1 bg-zinc-900 border border-zinc-800 rounded-xl p-1 w-fit overflow-x-auto">
           {SUB_MODULES.map(m => (
-            <button key={m.key} onClick={() => setActiveTab(m.key)}
+            <button key={m.key} onClick={() => { setActiveTab(m.key); const clientHash = window.location.hash.replace("#","").split("|")[0]; window.location.hash = clientHash + "|" + m.key; }}
               className={`text-sm px-4 py-1.5 rounded-lg transition whitespace-nowrap ${activeTab === m.key ? "bg-zinc-700 text-white" : "text-zinc-500 hover:text-zinc-300"}`}>
               {m.label}
             </button>
@@ -1534,7 +1541,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   // Use URL hash to track active client — survives page refresh
   const [activeClientId, setActiveClientId] = useState<string | null>(() => {
     if (typeof window !== "undefined") {
-      const hash = window.location.hash.replace("#", "");
+      const hash = window.location.hash.replace("#", "").split("|")[0];
       return hash || null;
     }
     return null;

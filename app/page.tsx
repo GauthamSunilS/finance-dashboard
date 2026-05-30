@@ -609,7 +609,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     if (activeClientId) {
       window.location.hash = activeClientId;
     } else {
-      history.pushState("", document.title, window.location.pathname);
+      history.pushState(null, document.title, window.location.pathname);
     }
   }, [activeClientId]);
 

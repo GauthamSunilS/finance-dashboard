@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { supabase } from "../lib/supabase";
 
 // ============================================
@@ -1620,6 +1620,17 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
 // ROOT
 // ============================================
 export default function Home() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return (
+    <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+      <p className="text-zinc-500 text-sm animate-pulse">Loading...</p>
+    </div>
+  );
+  return <HomeInner />;
+}
+
+function HomeInner() {
   const [session, setSession] = useState<boolean | null>(null);
 
   useEffect(() => {

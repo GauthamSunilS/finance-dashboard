@@ -1446,19 +1446,14 @@ const SUB_MODULES: { key: SubModule; label: string }[] = [
 ];
 
 function ClientModule({ client, onBack }: { client: Client; onBack: () => void }) {
-  const [activeTab, setActiveTab] = useState<SubModule>(() => {
-    if (typeof window !== "undefined") {
-      const saved = sessionStorage.getItem("zxi_activeTab");
-      const valid = ["invoices","sales_orders","estimates","payments","expenses","audit"];
-      return (saved && valid.includes(saved) ? saved : "invoices") as SubModule;
-    }
-    return "invoices";
-  });
+  const [activeTab, setActiveTab] = useState<SubModule>("invoices");
 
-  // Save tab to sessionStorage whenever it changes
   useEffect(() => {
-    sessionStorage.setItem("zxi_activeTab", activeTab);
-  }, [activeTab]);
+    // Read tab from hash on mount
+    const tab = window.location.hash.replace("#","").split("|")[1];
+    const valid = ["invoices","sales_orders","estimates","payments","expenses","audit"];
+    if (tab && valid.includes(tab)) setActiveTab(tab as SubModule);
+  }, []);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
@@ -1518,7 +1513,7 @@ function ClientModule({ client, onBack }: { client: Client; onBack: () => void }
         {/* Sub-module tabs */}
         <div className="flex gap-1 bg-zinc-900 border border-zinc-800 rounded-xl p-1 w-fit overflow-x-auto">
           {SUB_MODULES.map(m => (
-            <button key={m.key} onClick={() => { setActiveTab(m.key); sessionStorage.setItem("zxi_activeTab", m.key); }}
+            <button key={m.key} onClick={() => { setActiveTab(m.key); const clientId = window.location.hash.replace("#","").split("|")[0]; window.location.hash = clientId + "|" + m.key; }}
               className={`text-sm px-4 py-1.5 rounded-lg transition whitespace-nowrap ${activeTab === m.key ? "bg-zinc-700 text-white" : "text-zinc-500 hover:text-zinc-300"}`}>
               {m.label}
             </button>
@@ -1543,13 +1538,15 @@ function ClientModule({ client, onBack }: { client: Client; onBack: () => void }
 function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
-  // Use sessionStorage to persist client and tab across refreshes
-  const [activeClientId, setActiveClientId] = useState<string | null>(() => {
-    if (typeof window !== "undefined") {
-      return sessionStorage.getItem("zxi_clientId") || null;
-    }
-    return null;
-  });
+  const [activeClientId, setActiveClientId] = useState<string | null>(null);
+  const [initialized, setInitialized] = useState(false);
+
+  useEffect(() => {
+    // Read client from hash on mount
+    const hash = window.location.hash.replace("#", "").split("|")[0];
+    if (hash) setActiveClientId(hash);
+    setInitialized(true);
+  }, []);
 
   useEffect(() => {
     supabase.from("clients").select("*").order("name")
@@ -1557,18 +1554,27 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   }, []);
 
   useEffect(() => {
+    if (!initialized) return;
     if (activeClientId) {
-      sessionStorage.setItem("zxi_clientId", activeClientId);
+      const tab = window.location.hash.replace("#","").split("|")[1] || "invoices";
+      window.location.hash = activeClientId + "|" + tab;
     } else {
-      sessionStorage.removeItem("zxi_clientId");
-      sessionStorage.removeItem("zxi_activeTab");
+      window.location.hash = "";
     }
-  }, [activeClientId]);
+  }, [activeClientId, initialized]);
 
   const activeClient = clients.find(c => c.id === activeClientId) || null;
 
+  if ((loading || !initialized) && activeClientId) {
+    return (
+      <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center">
+        <p className="text-zinc-500 animate-pulse">Loading...</p>
+      </div>
+    );
+  }
+
   if (activeClient) {
-    return <ClientModule client={activeClient} onBack={() => { sessionStorage.removeItem("zxi_activeTab"); setActiveClientId(null); }} />;
+    return <ClientModule client={activeClient} onBack={() => setActiveClientId(null)} />;
   }
 
   return (
@@ -1590,7 +1596,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {clients.map(client => (
-              <button key={client.id} onClick={() => { sessionStorage.setItem("zxi_clientId", client.id); setActiveClientId(client.id); }}
+              <button key={client.id} onClick={() => { window.location.hash = client.id + "|invoices"; setActiveClientId(client.id); }}
                 className="text-left bg-zinc-900 border border-zinc-800 rounded-xl p-6 hover:border-zinc-600 hover:bg-zinc-800/60 transition group">
                 <div className="flex items-start justify-between">
                   <div>

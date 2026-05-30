@@ -1446,14 +1446,12 @@ const SUB_MODULES: { key: SubModule; label: string }[] = [
 ];
 
 function ClientModule({ client, onBack }: { client: Client; onBack: () => void }) {
-  const [activeTab, setActiveTab] = useState<SubModule>("invoices");
-
-  useEffect(() => {
-    // Read tab from hash on mount
+  const [activeTab, setActiveTab] = useState<SubModule>(() => {
+    if (typeof window === "undefined") return "invoices";
     const tab = window.location.hash.replace("#","").split("|")[1];
     const valid = ["invoices","sales_orders","estimates","payments","expenses","audit"];
-    if (tab && valid.includes(tab)) setActiveTab(tab as SubModule);
-  }, []);
+    return (tab && valid.includes(tab) ? tab : "invoices") as SubModule;
+  });
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
@@ -1538,14 +1536,15 @@ function ClientModule({ client, onBack }: { client: Client; onBack: () => void }
 function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeClientId, setActiveClientId] = useState<string | null>(null);
-  const [initialized, setInitialized] = useState(false);
+  const [activeClientId, setActiveClientId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const hash = window.location.hash.replace("#", "").split("|")[0];
+    return hash || null;
+  });
+  const [initialized, setInitialized] = useState(typeof window !== "undefined");
 
   useEffect(() => {
-    // Read client from hash on mount
-    const hash = window.location.hash.replace("#", "").split("|")[0];
-    if (hash) setActiveClientId(hash);
-    setInitialized(true);
+    if (!initialized) setInitialized(true);
   }, []);
 
   useEffect(() => {
@@ -1641,4 +1640,3 @@ export default function Home() {
     ? <Dashboard onLogout={() => setSession(false)} />
     : <LoginScreen onLogin={() => setSession(true)} />;
 }
-  

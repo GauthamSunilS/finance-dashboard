@@ -51,12 +51,13 @@ type SubModule = "invoices" | "sales_orders" | "estimates" | "payments" | "expen
 // HELPERS
 // ============================================
 function fmt(amount: number, currency?: string | null) {
-  const safeCurrency = currency || "INR";
+  const safeCurrency = (currency && currency !== "null") ? currency : "USD";
+  const locale = safeCurrency === "INR" ? "en-IN" : "en-US";
   try {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency", currency: safeCurrency, maximumFractionDigits: 0,
-  }).format(amount);
-  } catch { return "₹" + Math.round(amount).toLocaleString("en-IN"); }
+    return new Intl.NumberFormat(locale, {
+      style: "currency", currency: safeCurrency, maximumFractionDigits: 0,
+    }).format(amount);
+  } catch { return String(amount); }
 }
 
 function fmtDate(d: string | null | undefined) {
@@ -178,7 +179,7 @@ function InvoicesTab({ clientId }: { clientId: string }) {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <SummaryCard label="Total Invoiced" value={fmt(total)} color="text-white" />
         <SummaryCard label="Outstanding" value={fmt(balance)} color="text-amber-400" />
-        <SummaryCard label="Tax Collected" value={fmt(tax)} color="text-blue-400" />
+        <SummaryCard label="GST Collected" value={fmt(tax)} color="text-blue-400" />
         <SummaryCard label="Paid" value={`${paid} / ${filtered.length}`} color="text-emerald-400" />
       </div>
       <div className="flex gap-3">
@@ -201,7 +202,7 @@ function InvoicesTab({ clientId }: { clientId: string }) {
                 <th className="text-left px-4 py-3">Due</th>
                 <th className="text-left px-4 py-3">Status</th>
                 <th className="text-right px-4 py-3">Subtotal</th>
-                <th className="text-right px-4 py-3">Tax</th>
+                <th className="text-right px-4 py-3">GST</th>
                 <th className="text-right px-4 py-3">Total</th>
                 <th className="text-right px-4 py-3">Balance</th>
               </tr>
@@ -219,10 +220,10 @@ function InvoicesTab({ clientId }: { clientId: string }) {
                   <td className="px-4 py-3 text-zinc-400">{fmtDate(inv.date)}</td>
                   <td className="px-4 py-3 text-zinc-400">{fmtDate(inv.due_date)}</td>
                   <td className="px-4 py-3"><Badge status={inv.status} /></td>
-                  <td className="px-4 py-3 text-right text-zinc-300">{fmt(inv.sub_total, inv.currency_code ?? "INR")}</td>
-                  <td className="px-4 py-3 text-right text-blue-400">{fmt(inv.tax_total, inv.currency_code ?? "INR")}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-white">{fmt(inv.total, inv.currency_code ?? "INR")}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-amber-400">{fmt(inv.balance, inv.currency_code ?? "INR")}</td>
+                  <td className="px-4 py-3 text-right text-zinc-300">{inv.sub_total > 0 ? fmt(inv.sub_total, inv.currency_code) : "—"}</td>
+                  <td className="px-4 py-3 text-right text-blue-400">{inv.tax_total > 0 ? fmt(inv.tax_total, inv.currency_code) : "—"}</td>
+                  <td className="px-4 py-3 text-right font-semibold text-white">{fmt(inv.total, inv.currency_code)}</td>
+                  <td className="px-4 py-3 text-right font-semibold text-amber-400">{inv.balance > 0 ? fmt(inv.balance, inv.currency_code) : "—"}</td>
                 </tr>
               ))}
             </tbody>

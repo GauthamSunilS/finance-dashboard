@@ -45,7 +45,7 @@ type Expense = {
   total: number; currency_code: string; description: string | null;
 };
 
-type SubModule = "invoices" | "sales_orders" | "estimates" | "payments" | "expenses";
+type SubModule = "invoices" | "sales_orders" | "estimates" | "payments" | "expenses" | "reports";
 
 // ============================================
 // HELPERS
@@ -495,6 +495,249 @@ function ExpensesTab({ clientId }: { clientId: string }) {
 }
 
 // ============================================
+// REPORTS TAB
+// ============================================
+function ReportsTab({ clientId }: { clientId: string }) {
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [activeReport, setActiveReport] = useState<"customers" | "expenses">("customers");
+
+  useEffect(() => {
+    Promise.all([
+      supabase.from("finance_dashboard").select("*").eq("org_id", clientId),
+      supabase.from("payments").select("*").eq("org_id", clientId),
+      supabase.from("expenses").select("*").eq("org_id", clientId),
+    ]).then(([inv, pay, exp]) => {
+      setInvoices(inv.data || []);
+      setPayments(pay.data || []);
+      setExpenses(exp.data || []);
+      setLoading(false);
+    });
+  }, [clientId]);
+
+  if (loading) return <div className="text-center py-20 text-zinc-500">Loading reports...</div>;
+
+  // ── Customer Summary ──────────────────────────────────────────────────
+  const customerMap: Record<string, {
+    name: string; gst: string | null;
+    invoiced: number; received: number; balance: number; gst_amount: number;
+    invoiceCount: number; paidCount: number;
+  }> = {};
+
+  for (const inv of invoices) {
+    const key = inv.customer_name;
+    if (!customerMap[key]) {
+      customerMap[key] = { name: inv.customer_name, gst: inv.gst_number, invoiced: 0, received: 0, balance: 0, gst_amount: 0, invoiceCount: 0, paidCount: 0 };
+    }
+    customerMap[key].invoiced += inv.total;
+    customerMap[key].balance += inv.balance;
+    customerMap[key].gst_amount += inv.tax_total;
+    customerMap[key].invoiceCount++;
+    if (inv.status === "paid") customerMap[key].paidCount++;
+  }
+
+  for (const pay of payments) {
+    const key = pay.customer_name;
+    if (customerMap[key]) customerMap[key].received += pay.amount;
+  }
+
+  const customers = Object.values(customerMap).sort((a, b) => b.invoiced - a.invoiced);
+  const totalInvoiced = customers.reduce((s, c) => s + c.invoiced, 0);
+  const totalReceived = customers.reduce((s, c) => s + c.received, 0);
+  const totalBalance = customers.reduce((s, c) => s + c.balance, 0);
+  const totalGST = customers.reduce((s, c) => s + c.gst_amount, 0);
+
+  // ── Expense Ledger ─────────────────────────────────────────────────────
+  const expenseByAccount: Record<string, { account: string; total: number; count: number; items: Expense[] }> = {};
+  for (const exp of expenses) {
+    const key = exp.account_name || "Uncategorized";
+    if (!expenseByAccount[key]) expenseByAccount[key] = { account: key, total: 0, count: 0, items: [] };
+    expenseByAccount[key].total += exp.total;
+    expenseByAccount[key].count++;
+    expenseByAccount[key].items.push(exp);
+  }
+  const expenseAccounts = Object.values(expenseByAccount).sort((a, b) => b.total - a.total);
+  const totalExpenses = expenses.reduce((s, e) => s + e.total, 0);
+
+  return (
+    <div className="space-y-5">
+      {/* Report selector */}
+      <div className="flex gap-2">
+        <button
+          onClick={() => setActiveReport("customers")}
+          className={`text-sm px-5 py-2 rounded-lg border transition ${activeReport === "customers" ? "bg-zinc-100 text-zinc-900 border-zinc-100" : "bg-transparent text-zinc-400 border-zinc-800 hover:border-zinc-600"}`}>
+          Customer Report
+        </button>
+        <button
+          onClick={() => setActiveReport("expenses")}
+          className={`text-sm px-5 py-2 rounded-lg border transition ${activeReport === "expenses" ? "bg-zinc-100 text-zinc-900 border-zinc-100" : "bg-transparent text-zinc-400 border-zinc-800 hover:border-zinc-600"}`}>
+          Expense Ledger
+        </button>
+      </div>
+
+      {activeReport === "customers" && (
+        <div className="space-y-4">
+          {/* Summary cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+              <p className="text-xs text-zinc-500 mb-1">Total Invoiced</p>
+              <p className="text-xl font-semibold text-white">{fmt(totalInvoiced)}</p>
+            </div>
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+              <p className="text-xs text-zinc-500 mb-1">Total Received</p>
+              <p className="text-xl font-semibold text-emerald-400">{fmt(totalReceived)}</p>
+            </div>
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+              <p className="text-xs text-zinc-500 mb-1">Outstanding</p>
+              <p className="text-xl font-semibold text-amber-400">{fmt(totalBalance)}</p>
+            </div>
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+              <p className="text-xs text-zinc-500 mb-1">Total GST</p>
+              <p className="text-xl font-semibold text-blue-400">{fmt(totalGST)}</p>
+            </div>
+          </div>
+
+          {/* Customer table */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+            <div className="px-4 py-3 border-b border-zinc-800">
+              <h3 className="text-sm font-semibold text-zinc-200">Customer-wise Breakdown</h3>
+              <p className="text-xs text-zinc-500 mt-0.5">{customers.length} customers</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-zinc-800 text-zinc-500 text-xs uppercase">
+                    <th className="text-left px-4 py-3">Customer</th>
+                    <th className="text-left px-4 py-3">GST No.</th>
+                    <th className="text-right px-4 py-3">Invoices</th>
+                    <th className="text-right px-4 py-3">Invoiced</th>
+                    <th className="text-right px-4 py-3">Received</th>
+                    <th className="text-right px-4 py-3">Outstanding</th>
+                    <th className="text-right px-4 py-3">GST</th>
+                    <th className="text-right px-4 py-3">Collection %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {customers.map((c, i) => {
+                    const pct = c.invoiced > 0 ? Math.round((c.received / c.invoiced) * 100) : 0;
+                    return (
+                      <tr key={i} className="border-b border-zinc-800/60 hover:bg-zinc-800/40">
+                        <td className="px-4 py-3 font-medium text-zinc-100">{c.name}</td>
+                        <td className="px-4 py-3 text-zinc-500 font-mono text-xs">{c.gst || "—"}</td>
+                        <td className="px-4 py-3 text-right text-zinc-400">{c.invoiceCount} <span className="text-zinc-600 text-xs">({c.paidCount} paid)</span></td>
+                        <td className="px-4 py-3 text-right font-semibold text-white">{fmt(c.invoiced)}</td>
+                        <td className="px-4 py-3 text-right text-emerald-400">{fmt(c.received)}</td>
+                        <td className="px-4 py-3 text-right text-amber-400">{fmt(c.balance)}</td>
+                        <td className="px-4 py-3 text-right text-blue-400">{fmt(c.gst_amount)}</td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <div className="w-16 bg-zinc-800 rounded-full h-1.5">
+                              <div className="bg-emerald-400 h-1.5 rounded-full" style={{ width: `${Math.min(pct, 100)}%` }} />
+                            </div>
+                            <span className={`text-xs font-medium ${pct >= 100 ? "text-emerald-400" : pct >= 50 ? "text-amber-400" : "text-red-400"}`}>{pct}%</span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t border-zinc-700 bg-zinc-800/50">
+                    <td className="px-4 py-3 font-semibold text-zinc-300" colSpan={3}>Total</td>
+                    <td className="px-4 py-3 text-right font-bold text-white">{fmt(totalInvoiced)}</td>
+                    <td className="px-4 py-3 text-right font-bold text-emerald-400">{fmt(totalReceived)}</td>
+                    <td className="px-4 py-3 text-right font-bold text-amber-400">{fmt(totalBalance)}</td>
+                    <td className="px-4 py-3 text-right font-bold text-blue-400">{fmt(totalGST)}</td>
+                    <td />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeReport === "expenses" && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+              <p className="text-xs text-zinc-500 mb-1">Total Expenses</p>
+              <p className="text-xl font-semibold text-red-400">{fmt(totalExpenses)}</p>
+            </div>
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+              <p className="text-xs text-zinc-500 mb-1">No. of Entries</p>
+              <p className="text-xl font-semibold text-white">{expenses.length}</p>
+            </div>
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+              <p className="text-xs text-zinc-500 mb-1">Ledger Accounts</p>
+              <p className="text-xl font-semibold text-purple-400">{expenseAccounts.length}</p>
+            </div>
+          </div>
+
+          {/* Ledger breakdown */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+            <div className="px-4 py-3 border-b border-zinc-800">
+              <h3 className="text-sm font-semibold text-zinc-200">Expense Ledger</h3>
+              <p className="text-xs text-zinc-500 mt-0.5">Grouped by account</p>
+            </div>
+            {expenseAccounts.map((grp, gi) => (
+              <div key={gi} className="border-b border-zinc-800/60 last:border-0">
+                <div className="flex items-center justify-between px-4 py-3 bg-zinc-800/30">
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-semibold text-zinc-100">{grp.account}</span>
+                    <span className="text-xs text-zinc-500">{grp.count} entries</span>
+                  </div>
+                  <span className="text-sm font-bold text-red-400">{fmt(grp.total)}</span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-zinc-600 text-xs uppercase border-b border-zinc-800/40">
+                        <th className="text-left px-6 py-2">Expense #</th>
+                        <th className="text-left px-4 py-2">Vendor</th>
+                        <th className="text-left px-4 py-2">Date</th>
+                        <th className="text-left px-4 py-2">Status</th>
+                        <th className="text-left px-4 py-2">Description</th>
+                        <th className="text-right px-4 py-2">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {grp.items.map((exp, ei) => (
+                        <tr key={ei} className="border-b border-zinc-800/30 hover:bg-zinc-800/20 last:border-0">
+                          <td className="px-6 py-2 font-mono text-zinc-500 text-xs">{exp.expense_number}</td>
+                          <td className="px-4 py-2 text-zinc-300">{exp.vendor_name || "—"}</td>
+                          <td className="px-4 py-2 text-zinc-500">{fmtDate(exp.date)}</td>
+                          <td className="px-4 py-2">
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${STATUS_COLORS[exp.status] || "bg-zinc-800 text-zinc-400"}`}>{exp.status}</span>
+                          </td>
+                          <td className="px-4 py-2 text-zinc-500 text-xs max-w-[200px] truncate">{exp.description || "—"}</td>
+                          <td className="px-4 py-2 text-right font-semibold text-red-400">{fmt(exp.total, exp.currency_code)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+            {expenseAccounts.length === 0 && (
+              <div className="text-center py-10 text-zinc-500">No expenses found</div>
+            )}
+            {expenseAccounts.length > 0 && (
+              <div className="flex items-center justify-between px-4 py-3 bg-zinc-800/50 border-t border-zinc-700">
+                <span className="text-sm font-semibold text-zinc-300">Grand Total</span>
+                <span className="text-sm font-bold text-red-400">{fmt(totalExpenses)}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================
 // CLIENT MODULE
 // ============================================
 const SUB_MODULES: { key: SubModule; label: string }[] = [
@@ -503,6 +746,7 @@ const SUB_MODULES: { key: SubModule; label: string }[] = [
   { key: "estimates", label: "Estimates" },
   { key: "payments", label: "Payments" },
   { key: "expenses", label: "Expenses" },
+  { key: "reports", label: "📊 Reports" },
 ];
 
 function ClientModule({ client, onBack }: { client: Client; onBack: () => void }) {
@@ -579,6 +823,7 @@ function ClientModule({ client, onBack }: { client: Client; onBack: () => void }
         {activeTab === "estimates" && <EstimatesTab clientId={client.org_id ?? client.id} />}
         {activeTab === "payments" && <PaymentsTab clientId={client.org_id ?? client.id} />}
         {activeTab === "expenses" && <ExpensesTab clientId={client.org_id ?? client.id} />}
+        {activeTab === "reports" && <ReportsTab clientId={client.org_id ?? client.id} />}
       </div>
     </div>
   );

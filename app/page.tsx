@@ -59,8 +59,8 @@ function fmt(amount: number, currency?: string | null) {
   } catch { return "₹" + Math.round(amount).toLocaleString("en-IN"); }
 }
 
-function fmtDate(d: string) {
-  if (!d) return "—";
+function fmtDate(d: string | null | undefined) {
+  if (!d || d === "null") return "—";
   return new Date(d).toLocaleDateString("en-US", {
     day: "2-digit", month: "short", year: "numeric",
   });
@@ -219,10 +219,10 @@ function InvoicesTab({ clientId }: { clientId: string }) {
                   <td className="px-4 py-3 text-zinc-400">{fmtDate(inv.date)}</td>
                   <td className="px-4 py-3 text-zinc-400">{fmtDate(inv.due_date)}</td>
                   <td className="px-4 py-3"><Badge status={inv.status} /></td>
-                  <td className="px-4 py-3 text-right text-zinc-300">{fmt(inv.sub_total, inv.currency_code)}</td>
-                  <td className="px-4 py-3 text-right text-blue-400">{fmt(inv.tax_total, inv.currency_code)}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-white">{fmt(inv.total, inv.currency_code)}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-amber-400">{fmt(inv.balance, inv.currency_code)}</td>
+                  <td className="px-4 py-3 text-right text-zinc-300">{fmt(inv.sub_total, inv.currency_code ?? "INR")}</td>
+                  <td className="px-4 py-3 text-right text-blue-400">{fmt(inv.tax_total, inv.currency_code ?? "INR")}</td>
+                  <td className="px-4 py-3 text-right font-semibold text-white">{fmt(inv.total, inv.currency_code ?? "INR")}</td>
+                  <td className="px-4 py-3 text-right font-semibold text-amber-400">{fmt(inv.balance, inv.currency_code ?? "INR")}</td>
                 </tr>
               ))}
             </tbody>
@@ -291,7 +291,7 @@ function SalesOrdersTab({ clientId }: { clientId: string }) {
                   <td className="px-4 py-3 text-zinc-400">{fmtDate(s.date)}</td>
                   <td className="px-4 py-3 text-zinc-400">{fmtDate(s.shipment_date)}</td>
                   <td className="px-4 py-3"><Badge status={s.status} /></td>
-                  <td className="px-4 py-3 text-right font-semibold text-white">{fmt(s.total, s.currency_code)}</td>
+                  <td className="px-4 py-3 text-right font-semibold text-white">{fmt(s.total, s.currency_code ?? "INR")}</td>
                 </tr>
               ))}
             </tbody>
@@ -358,7 +358,7 @@ function EstimatesTab({ clientId }: { clientId: string }) {
                   <td className="px-4 py-3 text-zinc-400">{fmtDate(e.date)}</td>
                   <td className="px-4 py-3 text-zinc-400">{fmtDate(e.expiry_date)}</td>
                   <td className="px-4 py-3"><Badge status={e.status} /></td>
-                  <td className="px-4 py-3 text-right font-semibold text-white">{fmt(e.total, e.currency_code)}</td>
+                  <td className="px-4 py-3 text-right font-semibold text-white">{fmt(e.total, e.currency_code ?? "INR")}</td>
                 </tr>
               ))}
             </tbody>
@@ -421,7 +421,7 @@ function PaymentsTab({ clientId }: { clientId: string }) {
                   <td className="px-4 py-3 font-medium text-zinc-100">{p.customer_name}</td>
                   <td className="px-4 py-3 text-zinc-400">{fmtDate(p.date)}</td>
                   <td className="px-4 py-3 text-zinc-400 capitalize">{p.payment_mode}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-emerald-400">{fmt(p.amount, p.currency_code)}</td>
+                  <td className="px-4 py-3 text-right font-semibold text-emerald-400">{fmt(p.amount, p.currency_code ?? "INR")}</td>
                 </tr>
               ))}
             </tbody>
@@ -486,7 +486,7 @@ function ExpensesTab({ clientId }: { clientId: string }) {
                   <td className="px-4 py-3 text-zinc-300">{e.vendor_name}</td>
                   <td className="px-4 py-3 text-zinc-400">{fmtDate(e.date)}</td>
                   <td className="px-4 py-3"><Badge status={e.status} /></td>
-                  <td className="px-4 py-3 text-right font-semibold text-red-400">{fmt(e.total, e.currency_code)}</td>
+                  <td className="px-4 py-3 text-right font-semibold text-red-400">{fmt(e.total, e.currency_code ?? "INR")}</td>
                 </tr>
               ))}
             </tbody>

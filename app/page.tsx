@@ -48,7 +48,73 @@ function fmtDate(dateStr: string) {
   });
 }
 
-export default function Home() {
+// ---------- Login Screen ----------
+function LoginScreen({ onLogin }: { onLogin: () => void }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function handleLogin() {
+    setError(null);
+    setLoading(true);
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      setError(error.message);
+    } else {
+      onLogin();
+    }
+    setLoading(false);
+  }
+
+  return (
+    <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-2xl p-8 space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-white tracking-tight">Finance Dashboard</h1>
+          <p className="text-zinc-500 text-sm mt-1">Sign in to continue</p>
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-zinc-400 mb-1 block">Email</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-zinc-500"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-zinc-400 mb-1 block">Password</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+              placeholder="••••••••"
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-zinc-500"
+            />
+          </div>
+        </div>
+
+        {error && <p className="text-red-400 text-xs">{error}</p>}
+
+        <button
+          onClick={handleLogin}
+          disabled={loading}
+          className="w-full bg-white text-zinc-900 font-semibold text-sm py-2.5 rounded-lg hover:bg-zinc-200 transition disabled:opacity-50"
+        >
+          {loading ? "Signing in..." : "Sign In"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Dashboard ----------
+function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [data, setData] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -71,6 +137,11 @@ export default function Home() {
       setData(data || []);
     }
     setLoading(false);
+  }
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    onLogout();
   }
 
   const statuses = ["all", ...Array.from(new Set(data.map((d) => d.status)))];
@@ -98,12 +169,20 @@ export default function Home() {
             <h1 className="text-2xl font-bold tracking-tight text-white">Finance Dashboard</h1>
             <p className="text-zinc-400 text-sm mt-0.5">Zoho Books · Live data</p>
           </div>
-          <button
-            onClick={fetchData}
-            className="text-xs px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition"
-          >
-            ↻ Refresh
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={fetchData}
+              className="text-xs px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition"
+            >
+              ↻ Refresh
+            </button>
+            <button
+              onClick={handleLogout}
+              className="text-xs px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-red-900 text-zinc-300 hover:text-red-300 transition"
+            >
+              Sign Out
+            </button>
+          </div>
         </div>
 
         {/* Summary Cards */}
@@ -218,4 +297,33 @@ export default function Home() {
       </div>
     </div>
   );
+}
+
+// ---------- Root ----------
+export default function Home() {
+  const [session, setSession] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(!!data.session);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(!!session);
+    });
+
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  if (session === null) {
+    return (
+      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+        <p className="text-zinc-500 text-sm">Loading...</p>
+      </div>
+    );
+  }
+
+  return session
+    ? <Dashboard onLogout={() => setSession(false)} />
+    : <LoginScreen onLogin={() => setSession(true)} />;
 }

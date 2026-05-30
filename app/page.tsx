@@ -153,7 +153,7 @@ function InvoicesTab({ clientId }: { clientId: string }) {
 
   useEffect(() => {
     supabase.from("finance_dashboard").select("*")
-      .eq("client_id", clientId).order("date", { ascending: false })
+      .eq("org_id", clientId).order("date", { ascending: false })
       .then(({ data }) => { setData(data || []); setLoading(false); });
   }, [clientId]);
 
@@ -243,7 +243,7 @@ function SalesOrdersTab({ clientId }: { clientId: string }) {
 
   useEffect(() => {
     supabase.from("sales_orders").select("*")
-      .eq("client_id", clientId).order("date", { ascending: false })
+      .eq("org_id", clientId).order("date", { ascending: false })
       .then(({ data }) => { setData(data || []); setLoading(false); });
   }, [clientId]);
 
@@ -309,7 +309,7 @@ function EstimatesTab({ clientId }: { clientId: string }) {
 
   useEffect(() => {
     supabase.from("estimates").select("*")
-      .eq("client_id", clientId).order("date", { ascending: false })
+      .eq("org_id", clientId).order("date", { ascending: false })
       .then(({ data }) => { setData(data || []); setLoading(false); });
   }, [clientId]);
 
@@ -376,7 +376,7 @@ function PaymentsTab({ clientId }: { clientId: string }) {
 
   useEffect(() => {
     supabase.from("payments").select("*")
-      .eq("client_id", clientId).order("date", { ascending: false })
+      .eq("org_id", clientId).order("date", { ascending: false })
       .then(({ data }) => { setData(data || []); setLoading(false); });
   }, [clientId]);
 
@@ -439,7 +439,7 @@ function ExpensesTab({ clientId }: { clientId: string }) {
 
   useEffect(() => {
     supabase.from("expenses").select("*")
-      .eq("client_id", clientId).order("date", { ascending: false })
+      .eq("org_id", clientId).order("date", { ascending: false })
       .then(({ data }) => { setData(data || []); setLoading(false); });
   }, [clientId]);
 
@@ -574,11 +574,11 @@ function ClientModule({ client, onBack }: { client: Client; onBack: () => void }
         </div>
 
         {/* Tab content */}
-        {activeTab === "invoices" && <InvoicesTab clientId={client.id} />}
-        {activeTab === "sales_orders" && <SalesOrdersTab clientId={client.id} />}
-        {activeTab === "estimates" && <EstimatesTab clientId={client.id} />}
-        {activeTab === "payments" && <PaymentsTab clientId={client.id} />}
-        {activeTab === "expenses" && <ExpensesTab clientId={client.id} />}
+        {activeTab === "invoices" && <InvoicesTab clientId={client.org_id ?? client.id} />}
+        {activeTab === "sales_orders" && <SalesOrdersTab clientId={client.org_id ?? client.id} />}
+        {activeTab === "estimates" && <EstimatesTab clientId={client.org_id ?? client.id} />}
+        {activeTab === "payments" && <PaymentsTab clientId={client.org_id ?? client.id} />}
+        {activeTab === "expenses" && <ExpensesTab clientId={client.org_id ?? client.id} />}
       </div>
     </div>
   );

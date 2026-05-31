@@ -1105,15 +1105,17 @@ const getQuarter = (date: string) => {
   return "Q4 (Jan-Mar)";
 };
 
-function LedgerTDSTracker({ expenses, bills, journals, orgId }: {
-  expenses: Expense[]; bills: Bill[]; vendorPayments: VendorPayment[]; journals: Journal[]; orgId: string;
+function LedgerTDSTracker({ expenses, bills, journals, orgId, fyProp }: {
+  expenses: Expense[]; bills: Bill[]; vendorPayments: VendorPayment[]; journals: Journal[]; orgId: string; fyProp?: string;
 }) {
   const [rows, setRows] = React.useState<TDSTxnRow[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [activeTab, setActiveTab] = React.useState<"bills" | "expenses" | "journals">("bills");
   const [quarter, setQuarter] = React.useState("All");
   const [saving, setSaving] = React.useState<string | null>(null);
+  const [savingAll, setSavingAll] = React.useState(false);
   const [saveMsg, setSaveMsg] = React.useState("");
+  const [selected, setSelected] = React.useState<Set<string>>(new Set());
 
   React.useEffect(() => {
     supabase.from("pending_changes").select("*")
@@ -1143,6 +1145,7 @@ function LedgerTDSTracker({ expenses, bills, journals, orgId }: {
 
         const bRows = bills.map(b => makeRow(b.id, b.date, b.vendor_name||"", b.vendor_name||"", b.total, b.bill_number||b.id.slice(-8), "Bill"));
         const eRows = expenses.map(e => makeRow(e.id, e.date, e.vendor_name||"", e.account_name||"", e.total, e.expense_number||e.id.slice(-8), "Expense", e.description||""));
+        const BANK_KW = ["current account","savings account","bank account","cash account","petty cash account","hdfc","icici","sbi","axis bank","kotak","yes bank","indusind","cash in hand","cash at bank"];
         const jRows: TDSTxnRow[] = [];
         for (const j of journals) {
           let lines: any[] = [];
@@ -1151,6 +1154,8 @@ function LedgerTDSTracker({ expenses, bills, journals, orgId }: {
             const acct = line.account_name || line.account || "";
             const amt = parseFloat(line.debit || line.amount || "0") || 0;
             if (!acct || amt <= 0) continue;
+            // Skip bank/current account lines — these are the payment side, not the expense ledger
+            if (BANK_KW.some(k => acct.toLowerCase().includes(k))) continue;
             const inf = inferTds("", acct, amt, j.notes || "");
             if (!inf) continue;
             const lineId = `${j.id}__${acct.replace(/\s/g,"_")}`;
@@ -1198,12 +1203,50 @@ function LedgerTDSTracker({ expenses, bills, journals, orgId }: {
     setTimeout(() => setSaveMsg(""), 2000);
   };
 
+  const saveSelected = async () => {
+    setSavingAll(true);
+    const toSave = rows.filter(r => selected.has(r.id));
+    for (const row of toSave) {
+      const key = `txn||${row.source}||${row.id}`;
+      const { tdsApplicable, sec, rate, tdsAmount, pan, manualTds } = row;
+      await supabase.from("pending_changes").delete().eq("org_id", orgId).eq("module", "tds_ledger").eq("record_id", key);
+      await supabase.from("pending_changes").insert({ org_id: orgId, module: "tds_ledger", action: "update", record_id: key, payload: { id: row.id, date: row.date, vendor: row.vendor, account: row.account, amount: row.amount, ref: row.ref, source: row.source, tdsApplicable, sec, rate, tdsAmount, pan, manualTds }, status: "saved" });
+    }
+    setRows(prev => prev.map(r => selected.has(r.id) ? { ...r, saved: true } : r));
+    setSelected(new Set());
+    setSavingAll(false);
+    setSaveMsg(`✓ Saved ${toSave.length} rows`);
+    setTimeout(() => setSaveMsg(""), 3000);
+  };
+
   const quarters = ["All", "Q1 (Apr-Jun)", "Q2 (Jul-Sep)", "Q3 (Oct-Dec)", "Q4 (Jan-Mar)"];
+
+  // FY-aware quarter date filter
+  const inQuarter = (date: string) => {
+    if (quarter === "All") return true;
+    const q = getQuarter(date);
+    if (q !== quarter) return false;
+    // If a specific FY is selected, also verify the year aligns
+    if (fyProp && fyProp !== "All") {
+      const fyStart = parseInt(fyProp.split("-")[0]);
+      const d = new Date(date);
+      const m = d.getMonth(); // 0-indexed
+      const y = d.getFullYear();
+      if (quarter === "Q1 (Apr-Jun)" || quarter === "Q2 (Jul-Sep)" || quarter === "Q3 (Oct-Dec)") {
+        return y === fyStart;
+      } else { // Q4 Jan-Mar belongs to next year
+        return y === fyStart + 1;
+      }
+    }
+    return true;
+  };
+
   const billRows = rows.filter(r => r.source === "Bill");
   const expRows = rows.filter(r => r.source === "Expense");
   const jnlRows = rows.filter(r => r.source === "Journal");
   const activeRows = (activeTab === "bills" ? billRows : activeTab === "expenses" ? expRows : jnlRows)
-    .filter(r => quarter === "All" || getQuarter(r.date) === quarter)
+    .filter(r => inQuarter(r.date))
+
     .sort((a, b) => (b.date||"").localeCompare(a.date||""));
 
   const billTDS = billRows.filter(r => r.tdsApplicable && r.saved).reduce((s, r) => s + r.tdsAmount, 0);
@@ -1243,6 +1286,12 @@ function LedgerTDSTracker({ expenses, bills, journals, orgId }: {
             className="text-sm border border-zinc-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:border-black">
             {quarters.map(q => <option key={q} value={q}>{q}</option>)}
           </select>
+          {selected.size > 0 && (
+            <button onClick={saveSelected} disabled={savingAll}
+              className="text-sm bg-violet-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-violet-700 transition disabled:opacity-60">
+              {savingAll ? "Saving..." : `✓ Save Selected (${selected.size})`}
+            </button>
+          )}
           {unsavedCount > 0 && <span className="text-xs text-amber-600 font-semibold bg-amber-50 border border-amber-200 px-3 py-1 rounded-full">⚠ {unsavedCount} unsaved</span>}
           {saveMsg && <span className="text-xs text-emerald-600 font-semibold bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full">{saveMsg}</span>}
         </div>
@@ -1258,6 +1307,15 @@ function LedgerTDSTracker({ expenses, bills, journals, orgId }: {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-zinc-200 bg-zinc-50 text-[11px] font-semibold text-zinc-500 uppercase tracking-wide">
+                <th className="px-3 py-3">
+                  <input type="checkbox"
+                    checked={activeRows.length > 0 && activeRows.every(r => selected.has(r.id))}
+                    onChange={e => {
+                      if (e.target.checked) setSelected(prev => new Set([...prev, ...activeRows.map(r => r.id)]));
+                      else setSelected(prev => { const n = new Set(prev); activeRows.forEach(r => n.delete(r.id)); return n; });
+                    }}
+                    className="rounded" />
+                </th>
                 <th className="text-left px-4 py-3 whitespace-nowrap">Date</th>
                 <th className="text-left px-4 py-3">Vendor</th>
                 <th className="text-left px-4 py-3">Account / Ledger</th>
@@ -1277,6 +1335,11 @@ function LedgerTDSTracker({ expenses, bills, journals, orgId }: {
                   !row.tdsApplicable ? "opacity-40 hover:opacity-60" :
                   "hover:bg-violet-50/20"
                 }`}>
+                  <td className="px-3 py-3">
+                    <input type="checkbox" checked={selected.has(row.id)}
+                      onChange={e => setSelected(prev => { const n = new Set(prev); e.target.checked ? n.add(row.id) : n.delete(row.id); return n; })}
+                      className="rounded" />
+                  </td>
                   <td className="px-4 py-3 text-xs text-zinc-500 whitespace-nowrap">{fdate(row.date)}</td>
                   <td className="px-4 py-3 font-semibold text-zinc-900 text-sm max-w-[160px]">
                     <span title={row.vendor}>{row.vendor}</span>
@@ -1794,6 +1857,7 @@ function AuditModule({ orgId, initSection = "" }: { orgId: string; initSection?:
           vendorPayments={filterByFYMonth(vendorPayments, fy, month)}
           journals={filterByFYMonth(journals, fy, month)}
           orgId={orgId}
+          fyProp={fy}
         />
       </div>
 

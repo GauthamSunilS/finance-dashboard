@@ -1110,7 +1110,7 @@ function LedgerTDSTracker({ expenses, bills, orgId }: {
 }) {
   const [rows, setRows] = React.useState<TDSTxnRow[]>([]);
   const [loading, setLoading] = React.useState(true);
-  const [activeTab, setActiveTab] = React.useState<"bills" | "expenses">("bills");
+  const [activeTab, setActiveTab] = React.useState<"bills" | "expenses" | "journals">("bills");
   const [quarter, setQuarter] = React.useState("All");
   const [saving, setSaving] = React.useState<string | null>(null);
   const [saveMsg, setSaveMsg] = React.useState("");
@@ -1143,7 +1143,27 @@ function LedgerTDSTracker({ expenses, bills, orgId }: {
 
         const bRows = bills.map(b => makeRow(b.id, b.date, b.vendor_name||"", b.vendor_name||"", b.total, b.bill_number||b.id.slice(-8), "Bill"));
         const eRows = expenses.map(e => makeRow(e.id, e.date, e.vendor_name||"", e.account_name||"", e.total, e.expense_number||e.id.slice(-8), "Expense", e.description||""));
-        setRows([...bRows, ...eRows]);
+        const jRows: TDSTxnRow[] = [];
+        for (const j of journals) {
+          let lines: any[] = [];
+          try { lines = JSON.parse(j.line_items || "[]"); } catch { lines = []; }
+          for (const line of lines) {
+            const acct = line.account_name || line.account || "";
+            const amt = parseFloat(line.debit || line.amount || "0") || 0;
+            if (!acct || amt <= 0) continue;
+            const inf = inferTds("", acct, amt, j.notes || "");
+            if (!inf) continue;
+            const lineId = `${j.id}__${acct.replace(/\s/g,"_")}`;
+            const key = `txn||Journal||${lineId}`;
+            const sv2 = savedMap[key];
+            if (sv2) {
+              jRows.push({ id: lineId, date: j.journal_date, vendor: j.entry_number||"Journal", account: acct, amount: amt, ref: j.entry_number||j.id.slice(-8), source: "Journal" as any, ...sv2, saved: true });
+            } else {
+              jRows.push({ id: lineId, date: j.journal_date, vendor: j.entry_number||"Journal", account: acct, amount: amt, ref: j.entry_number||j.id.slice(-8), source: "Journal" as any, tdsApplicable: true, sec: inf.sec, rate: inf.rate, tdsAmount: Math.round(amt * inf.rate / 100), pan: "", manualTds: false, saved: false });
+            }
+          }
+        }
+        setRows([...bRows, ...eRows, ...jRows]);
         setLoading(false);
       });
   }, [orgId]);
@@ -1181,12 +1201,14 @@ function LedgerTDSTracker({ expenses, bills, orgId }: {
   const quarters = ["All", "Q1 (Apr-Jun)", "Q2 (Jul-Sep)", "Q3 (Oct-Dec)", "Q4 (Jan-Mar)"];
   const billRows = rows.filter(r => r.source === "Bill");
   const expRows = rows.filter(r => r.source === "Expense");
-  const activeRows = (activeTab === "bills" ? billRows : expRows)
+  const jnlRows = rows.filter(r => r.source === ("Journal" as any));
+  const activeRows = (activeTab === "bills" ? billRows : activeTab === "expenses" ? expRows : jnlRows)
     .filter(r => quarter === "All" || getQuarter(r.date) === quarter)
     .sort((a, b) => (b.date||"").localeCompare(a.date||""));
 
   const billTDS = billRows.filter(r => r.tdsApplicable && r.saved).reduce((s, r) => s + r.tdsAmount, 0);
   const expTDS = expRows.filter(r => r.tdsApplicable && r.saved).reduce((s, r) => s + r.tdsAmount, 0);
+  const jnlTDS = jnlRows.filter(r => r.tdsApplicable && r.saved).reduce((s, r) => s + r.tdsAmount, 0);
   const activeTDS = activeRows.filter(r => r.tdsApplicable).reduce((s, r) => s + r.tdsAmount, 0);
   const missingPAN = activeRows.filter(r => r.tdsApplicable && !r.pan).length;
   const unsavedCount = activeRows.filter(r => !r.saved && r.tdsApplicable).length;
@@ -1198,18 +1220,19 @@ function LedgerTDSTracker({ expenses, bills, orgId }: {
   return (
     <div className="space-y-4">
       {/* Summary cards */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-5 gap-3">
         <Card label="Bills TDS (Saved)" value={inr(billTDS)} color="text-sky-700" />
         <Card label="Expenses TDS (Saved)" value={inr(expTDS)} color="text-emerald-700" />
-        <Card label="Total TDS (26Q)" value={inr(billTDS + expTDS)} />
+        <Card label="Journals TDS (Saved)" value={inr(jnlTDS)} color="text-violet-700" />
+        <Card label="Total TDS (26Q)" value={inr(billTDS + expTDS + jnlTDS)} />
         <Card label="PAN Missing" value={String(missingPAN)} color={missingPAN > 0 ? "text-red-600" : "text-emerald-600"} />
       </div>
 
       {/* Controls */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex gap-1 bg-white border border-zinc-200 rounded-xl p-1 shadow-sm">
-          {([["bills", `Bills (${billRows.length})`, "bg-sky-600"], ["expenses", `Expenses (${expRows.length})`, "bg-emerald-600"]] as [string,string,string][]).map(([id, label, color]) => (
-            <button key={id} onClick={() => setActiveTab(id as "bills"|"expenses")}
+          {([["bills", `Bills (${billRows.length})`, "bg-sky-600"], ["expenses", `Expenses (${expRows.length})`, "bg-emerald-600"], ["journals", `Journals (${jnlRows.length})`, "bg-violet-600"]] as [string,string,string][]).map(([id, label, color]) => (
+            <button key={id} onClick={() => setActiveTab(id as "bills"|"expenses"|"journals")}
               className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === id ? `${color} text-white shadow-sm` : "text-zinc-500 hover:text-zinc-800"}`}>
               {label}
             </button>

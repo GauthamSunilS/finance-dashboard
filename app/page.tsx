@@ -1112,6 +1112,7 @@ function LedgerTDSTracker({ expenses, bills, journals, orgId, fyProp }: {
   const [loading, setLoading] = React.useState(true);
   const [activeTab, setActiveTab] = React.useState<"bills" | "expenses" | "journals">("bills");
   const [quarter, setQuarter] = React.useState("All");
+  const [tdsMonth, setTdsMonth] = React.useState("All");
   const [saving, setSaving] = React.useState<string | null>(null);
   const [savingAll, setSavingAll] = React.useState(false);
   const [saveMsg, setSaveMsg] = React.useState("");
@@ -1219,7 +1220,15 @@ function LedgerTDSTracker({ expenses, bills, journals, orgId, fyProp }: {
     setTimeout(() => setSaveMsg(""), 3000);
   };
 
+  const disableSelected = () => {
+    setRows(prev => prev.map(r => selected.has(r.id) ? { ...r, tdsApplicable: false, tdsAmount: 0, saved: false } : r));
+    setSaveMsg(`TDS disabled for ${selected.size} rows — save to confirm`);
+    setTimeout(() => setSaveMsg(""), 4000);
+  };
+
   const quarters = ["All", "Q1 (Apr-Jun)", "Q2 (Jul-Sep)", "Q3 (Oct-Dec)", "Q4 (Jan-Mar)"];
+
+  const inMonth = (date: string) => tdsMonth === "All" || (date && date.startsWith(tdsMonth));
 
   // FY-aware quarter date filter
   const inQuarter = (date: string) => {
@@ -1245,7 +1254,7 @@ function LedgerTDSTracker({ expenses, bills, journals, orgId, fyProp }: {
   const expRows = rows.filter(r => r.source === "Expense");
   const jnlRows = rows.filter(r => r.source === "Journal");
   const activeRows = (activeTab === "bills" ? billRows : activeTab === "expenses" ? expRows : jnlRows)
-    .filter(r => inQuarter(r.date))
+    .filter(r => inQuarter(r.date) && inMonth(r.date))
 
     .sort((a, b) => (b.date||"").localeCompare(a.date||""));
 
@@ -1282,15 +1291,28 @@ function LedgerTDSTracker({ expenses, bills, journals, orgId, fyProp }: {
           ))}
         </div>
         <div className="flex items-center gap-3">
-          <select value={quarter} onChange={e => setQuarter(e.target.value)}
+          <select value={tdsMonth} onChange={e => { setTdsMonth(e.target.value); setQuarter("All"); }}
+            className="text-sm border border-zinc-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:border-black">
+            <option value="All">All Months</option>
+            {Array.from(new Set([...bills.map(b => b.date?.slice(0,7)), ...expenses.map(e => e.date?.slice(0,7))].filter(Boolean))).sort().reverse().map(m => (
+              <option key={m} value={m}>{new Date(m + "-01").toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</option>
+            ))}
+          </select>
+          <select value={quarter} onChange={e => { setQuarter(e.target.value); setTdsMonth("All"); }}
             className="text-sm border border-zinc-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:border-black">
             {quarters.map(q => <option key={q} value={q}>{q}</option>)}
           </select>
           {selected.size > 0 && (
-            <button onClick={saveSelected} disabled={savingAll}
-              className="text-sm bg-violet-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-violet-700 transition disabled:opacity-60">
-              {savingAll ? "Saving..." : `✓ Save Selected (${selected.size})`}
-            </button>
+            <>
+              <button onClick={saveSelected} disabled={savingAll}
+                className="text-sm bg-violet-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-violet-700 transition disabled:opacity-60">
+                {savingAll ? "Saving..." : `✓ Save Selected (${selected.size})`}
+              </button>
+              <button onClick={disableSelected}
+                className="text-sm bg-zinc-100 text-zinc-700 border border-zinc-300 px-4 py-2 rounded-lg font-semibold hover:bg-red-50 hover:text-red-700 hover:border-red-300 transition">
+                🚫 Disable TDS ({selected.size})
+              </button>
+            </>
           )}
           {unsavedCount > 0 && <span className="text-xs text-amber-600 font-semibold bg-amber-50 border border-amber-200 px-3 py-1 rounded-full">⚠ {unsavedCount} unsaved</span>}
           {saveMsg && <span className="text-xs text-emerald-600 font-semibold bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full">{saveMsg}</span>}

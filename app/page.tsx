@@ -1507,8 +1507,7 @@ function AuditModule({ orgId, initSection = "" }: { orgId: string; initSection?:
           id: "bill_"+b.id, expense_number: b.bill_number, account_name: b.vendor_name || "Bill",
           vendor_name: b.vendor_name, status: b.status, date: b.date,
           total: b.total, sub_total: b.total, tax_total: 0,
-          currency_code: b.currency_code, description: null, is_billable: false,
-          customer_name: null, paid_through_account_name: null, reference_number: null,
+          currency_code: b.currency_code, description: null,
         } as Expense));
 
         // Vendor payments as TDS source
@@ -1516,8 +1515,7 @@ function AuditModule({ orgId, initSection = "" }: { orgId: string; initSection?:
           id: "vp_"+vp.id, expense_number: vp.payment_number || vp.id, account_name: "Vendor Payment",
           vendor_name: vp.vendor_name, status: "paid", date: vp.date,
           total: vp.amount, sub_total: vp.amount, tax_total: 0,
-          currency_code: vp.currency_code, description: null, is_billable: false,
-          customer_name: null, paid_through_account_name: null, reference_number: null,
+          currency_code: vp.currency_code, description: null,
         } as Expense));
 
         // Journal debit lines as TDS source
@@ -1532,8 +1530,7 @@ function AuditModule({ orgId, initSection = "" }: { orgId: string; initSection?:
                 status: "published", date: j.journal_date,
                 total: Number(l.amount || l.debit || 0), sub_total: Number(l.amount || l.debit || 0),
                 tax_total: 0, currency_code: j.currency_code || "INR",
-                description: j.notes, is_billable: false,
-                customer_name: null, paid_through_account_name: null, reference_number: null,
+                description: j.notes,
               } as Expense));
           } catch { return []; }
         });

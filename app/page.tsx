@@ -678,6 +678,7 @@ function AccountingModule({ orgId }: { orgId: string }) {
   if (loading) return <div className="text-center py-20 text-zinc-400">Loading accounting data...</div>;
 
   return (
+    <>
     <div className="space-y-4">
       {/* Section nav */}
       <div className="flex gap-1 flex-wrap border-b border-zinc-200 pb-0">
@@ -914,12 +915,11 @@ function AccountingModule({ orgId }: { orgId: string }) {
         );
       })()}
     </div>
-
-    {/* Modals */}
     {showPending && <PendingChangesPanel orgId={orgId} onClose={() => setShowPending(false)} />}
     {modal?.type === "expense" && <Modal title={modal.record ? "Edit Expense" : "New Expense"} onClose={() => setModal(null)}><ExpenseForm orgId={orgId} expense={modal.record} onSave={() => { reload(); setPendingCount(c => c + 1); }} onClose={() => setModal(null)} /></Modal>}
     {modal?.type === "journal" && <Modal title={modal.record ? "Edit Journal" : "New Journal Entry"} onClose={() => setModal(null)}><JournalForm orgId={orgId} journal={modal.record} onSave={() => { reload(); setPendingCount(c => c + 1); }} onClose={() => setModal(null)} /></Modal>}
     {modal?.type === "bill" && <Modal title={modal.record ? "Edit Bill" : "New Bill"} onClose={() => setModal(null)}><BillForm orgId={orgId} bill={modal.record} onSave={() => { reload(); setPendingCount(c => c + 1); }} onClose={() => setModal(null)} /></Modal>}
+    </>
   );
 }
 

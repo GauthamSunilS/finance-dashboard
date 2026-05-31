@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 
 const COMPANY_LOGO = "/logo.png";const COMPANY_NAME = "Gautham & Associates";
 import { supabase } from "../lib/supabase";
@@ -1499,10 +1499,7 @@ function ClientModule({ client, onBack }: { client: Client; onBack: () => void }
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <img src={COMPANY_LOGO} alt="Logo" className="h-8 w-auto object-contain" />
-              <span className="text-xs text-zinc-500 font-medium hidden sm:block">{COMPANY_NAME}</span>
-            </div>
+            <img src={COMPANY_LOGO} alt="CA India" className="h-8 w-auto object-contain" />
             <span className="text-zinc-700">|</span>
             <button onClick={onBack} className="text-zinc-500 hover:text-zinc-300 transition text-sm">← All Clients</button>
             <span className="text-zinc-700">/</span>
@@ -1601,9 +1598,9 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       {/* Top bar */}
       <div className="border-b border-zinc-200 px-8 py-3 flex items-center justify-between bg-white">
         <div className="flex items-center gap-3">
-          <img src={COMPANY_LOGO} alt="Logo" className="h-10 w-auto object-contain" />
+          <img src={COMPANY_LOGO} alt="CA India" className="h-10 w-auto object-contain" />
           <div className="border-l border-zinc-200 pl-3">
-            <p className="text-sm font-bold text-zinc-900 leading-tight">{COMPANY_NAME}</p>
+            <p className="text-sm font-bold text-zinc-900">{COMPANY_NAME}</p>
             <p className="text-xs text-zinc-400">Finance Dashboard · {today}</p>
           </div>
         </div>

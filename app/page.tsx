@@ -161,26 +161,37 @@ function filterByFYMonth<T extends { date?: string; journal_date?: string }>(
   });
 }
 
-function FYMonthFilter({ dates, fy, month, onFY, onMonth }: {
+function FYMonthFilter({ dates, fy, month, onFY, onMonth, quarter, onQuarter }: {
   dates: string[]; fy: string; month: string;
   onFY: (v: string) => void; onMonth: (v: string) => void;
+  quarter?: string; onQuarter?: (v: string) => void;
 }) {
   const fys = getAvailableFYs(dates);
   const months = getAvailableMonths(dates, fy);
+  const quarters = ["All", "Q1 (Apr-Jun)", "Q2 (Jul-Sep)", "Q3 (Oct-Dec)", "Q4 (Jan-Mar)"];
   return (
     <div className="flex items-center gap-2 flex-wrap">
       <span className="text-xs text-zinc-400 font-medium">FY:</span>
-      <select value={fy} onChange={e => { onFY(e.target.value); onMonth("All"); }}
+      <select value={fy} onChange={e => { onFY(e.target.value); onMonth("All"); onQuarter?.("All"); }}
         className="text-xs border border-zinc-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-black bg-white">
         {fys.map(f => <option key={f} value={f}>{f}</option>)}
       </select>
       <span className="text-xs text-zinc-400 font-medium">Month:</span>
-      <select value={month} onChange={e => onMonth(e.target.value)}
+      <select value={month} onChange={e => { onMonth(e.target.value); onQuarter?.("All"); }}
         className="text-xs border border-zinc-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-black bg-white">
         {months.map(m => <option key={m} value={m}>{m === "All" ? "All Months" : new Date(m + "-01").toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</option>)}
       </select>
-      {(fy !== "All" || month !== "All") && (
-        <button onClick={() => { onFY("All"); onMonth("All"); }}
+      {onQuarter && (
+        <>
+          <span className="text-xs text-zinc-400 font-medium">Quarter:</span>
+          <select value={quarter || "All"} onChange={e => { onQuarter(e.target.value); onMonth("All"); }}
+            className="text-xs border border-zinc-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-black bg-white">
+            {quarters.map(q => <option key={q} value={q}>{q}</option>)}
+          </select>
+        </>
+      )}
+      {(fy !== "All" || month !== "All" || (quarter && quarter !== "All")) && (
+        <button onClick={() => { onFY("All"); onMonth("All"); onQuarter?.("All"); }}
           className="text-xs text-zinc-400 hover:text-black px-2 py-1 rounded border border-zinc-200 hover:border-zinc-400 transition">
           Clear
         </button>
@@ -1105,14 +1116,12 @@ const getQuarter = (date: string) => {
   return "Q4 (Jan-Mar)";
 };
 
-function LedgerTDSTracker({ expenses, bills, journals, orgId, fyProp }: {
-  expenses: Expense[]; bills: Bill[]; vendorPayments: VendorPayment[]; journals: Journal[]; orgId: string; fyProp?: string;
+function LedgerTDSTracker({ expenses, bills, journals, orgId, fyProp, quarterProp }: {
+  expenses: Expense[]; bills: Bill[]; vendorPayments: VendorPayment[]; journals: Journal[]; orgId: string; fyProp?: string; quarterProp?: string;
 }) {
   const [rows, setRows] = React.useState<TDSTxnRow[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [activeTab, setActiveTab] = React.useState<"bills" | "expenses" | "journals">("bills");
-  const [quarter, setQuarter] = React.useState("All");
-  const [tdsMonth, setTdsMonth] = React.useState("All");
   const [saving, setSaving] = React.useState<string | null>(null);
   const [savingAll, setSavingAll] = React.useState(false);
   const [saveMsg, setSaveMsg] = React.useState("");
@@ -1228,14 +1237,14 @@ function LedgerTDSTracker({ expenses, bills, journals, orgId, fyProp }: {
 
   const quarters = ["All", "Q1 (Apr-Jun)", "Q2 (Jul-Sep)", "Q3 (Oct-Dec)", "Q4 (Jan-Mar)"];
 
-  const inMonth = (date: string) => tdsMonth === "All" || (date && date.startsWith(tdsMonth));
+  const inMonth = (date: string) => true; // Month filtering handled by parent via filterByFYMonth
 
-  // FY-aware quarter date filter
+  // FY-aware quarter date filter using quarterProp from parent
   const inQuarter = (date: string) => {
+    const quarter = quarterProp || "All";
     if (quarter === "All") return true;
     const q = getQuarter(date);
     if (q !== quarter) return false;
-    // If a specific FY is selected, also verify the year aligns
     if (fyProp && fyProp !== "All") {
       const fyStart = parseInt(fyProp.split("-")[0]);
       const d = new Date(date);
@@ -1291,17 +1300,6 @@ function LedgerTDSTracker({ expenses, bills, journals, orgId, fyProp }: {
           ))}
         </div>
         <div className="flex items-center gap-3">
-          <select value={tdsMonth} onChange={e => { setTdsMonth(e.target.value); setQuarter("All"); }}
-            className="text-sm border border-zinc-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:border-black">
-            <option value="All">All Months</option>
-            {Array.from(new Set([...bills.map(b => b.date?.slice(0,7)), ...expenses.map(e => e.date?.slice(0,7))].filter(Boolean))).sort().reverse().map(m => (
-              <option key={m} value={m}>{new Date(m + "-01").toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</option>
-            ))}
-          </select>
-          <select value={quarter} onChange={e => { setQuarter(e.target.value); setTdsMonth("All"); }}
-            className="text-sm border border-zinc-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:border-black">
-            {quarters.map(q => <option key={q} value={q}>{q}</option>)}
-          </select>
           {selected.size > 0 && (
             <>
               <button onClick={saveSelected} disabled={savingAll}
@@ -1478,6 +1476,7 @@ function AuditModule({ orgId, initSection = "" }: { orgId: string; initSection?:
   const [monthFilter, setMonthFilter] = useState("");
   const [fy, setFy] = useState("All");
   const [month, setMonth] = useState("All");
+  const [auditQuarter, setAuditQuarter] = useState("All");
 
   useEffect(() => {
     Promise.all([
@@ -1618,7 +1617,8 @@ function AuditModule({ orgId, initSection = "" }: { orgId: string; initSection?:
       {/* FY / Month Filter */}
       <FYMonthFilter
         dates={[...invoices, ...expenses, ...salesOrders, ...payments, ...bills, ...purchaseOrders, ...vendorPayments].map((i: any) => i.date || "")}
-        fy={fy} month={month} onFY={v => { setFy(v); setMonth("All"); }} onMonth={setMonth} />
+        fy={fy} month={month} onFY={v => { setFy(v); setMonth("All"); setAuditQuarter("All"); }} onMonth={v => { setMonth(v); setAuditQuarter("All"); }}
+        quarter={auditQuarter} onQuarter={setAuditQuarter} />
 
       {/* Overview */}
       {section === "overview" && (
@@ -1880,6 +1880,7 @@ function AuditModule({ orgId, initSection = "" }: { orgId: string; initSection?:
           journals={filterByFYMonth(journals, fy, month)}
           orgId={orgId}
           fyProp={fy}
+          quarterProp={auditQuarter}
         />
       </div>
 

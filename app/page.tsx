@@ -275,7 +275,13 @@ function JournalTable({ journals }: { journals: Journal[] }) {
 
 // ─── Accounting Module ────────────────────────────────────────────────────────
 function AccountingModule({ orgId }: { orgId: string }) {
-  const [section, setSection] = useState<AcctSection>("invoices");
+  const [section, setSection] = useState<AcctSection>(() => {
+    try {
+      const s = window.location.hash.replace("#","").split("|")[2];
+      const valid = ["invoices","sales_orders","estimates","payments","expenses","purchases","bills","vendor_payments","journals"];
+      return (s && valid.includes(s) ? s : "invoices") as AcctSection;
+    } catch { return "invoices"; }
+  });
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
   const [estimates, setEstimates] = useState<Estimate[]>([]);
@@ -328,7 +334,7 @@ function AccountingModule({ orgId }: { orgId: string }) {
       {/* Section nav */}
       <div className="flex gap-1 flex-wrap border-b border-zinc-200 pb-0">
         {SECTIONS.map(s => (
-          <button key={s.key} onClick={() => { setSection(s.key); setSearch(""); }}
+          <button key={s.key} onClick={() => { setSection(s.key); setSearch(""); try { const parts = window.location.hash.replace("#","").split("|"); window.location.hash = `${parts[0]}|${parts[1] || "accounting"}|${s.key}`; } catch {} }}
             className={`text-xs px-3 py-2 whitespace-nowrap border-b-2 -mb-px transition font-medium ${section === s.key ? "border-black text-black" : "border-transparent text-zinc-400 hover:text-zinc-700"}`}>
             {s.label} <span className="text-zinc-300 ml-1">{s.count}</span>
           </button>
@@ -553,7 +559,13 @@ function AccountingModule({ orgId }: { orgId: string }) {
 
 // ─── Internal Audit Module ────────────────────────────────────────────────────
 function AuditModule({ orgId }: { orgId: string }) {
-  const [section, setSection] = useState<AuditSection>("overview");
+  const [section, setSection] = useState<AuditSection>(() => {
+    try {
+      const s = window.location.hash.replace("#","").split("|")[2];
+      const valid = ["overview","customers","so_match","po_match","gst","tds","findings"];
+      return (s && valid.includes(s) ? s : "overview") as AuditSection;
+    } catch { return "overview"; }
+  });
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -691,7 +703,7 @@ function AuditModule({ orgId }: { orgId: string }) {
     <div className="space-y-4">
       <div className="flex gap-1 flex-wrap border-b border-zinc-200">
         {AUDIT_SECTIONS.map(s => (
-          <button key={s.key} onClick={() => setSection(s.key)}
+          <button key={s.key} onClick={() => { setSection(s.key); try { const p = window.location.hash.replace("#","").split("|"); window.location.hash = `${p[0]}|${p[1]||"audit"}|${s.key}`; } catch {} }}
             className={`text-xs px-3 py-2 whitespace-nowrap border-b-2 -mb-px transition font-medium ${section === s.key ? "border-black text-black" : "border-transparent text-zinc-400 hover:text-zinc-700"}`}>
             {s.label}
           </button>
@@ -1111,7 +1123,13 @@ function AuditModule({ orgId }: { orgId: string }) {
 
 // ─── Compliance Module ────────────────────────────────────────────────────────
 function ComplianceModule({ orgId, clientName }: { orgId: string; clientName: string }) {
-  const [section, setSection] = useState<CompSection>("summary");
+  const [section, setSection] = useState<CompSection>(() => {
+    try {
+      const s = window.location.hash.replace("#","").split("|")[2];
+      const valid = ["summary","gst_filing","tds_filing","pt_pf","it_filing"];
+      return (s && valid.includes(s) ? s : "summary") as CompSection;
+    } catch { return "summary"; }
+  });
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1152,7 +1170,7 @@ function ComplianceModule({ orgId, clientName }: { orgId: string; clientName: st
     <div className="space-y-4">
       <div className="flex gap-1 flex-wrap border-b border-zinc-200">
         {COMP_SECTIONS.map(s => (
-          <button key={s.key} onClick={() => setSection(s.key)}
+          <button key={s.key} onClick={() => { setSection(s.key); try { const p = window.location.hash.replace("#","").split("|"); window.location.hash = `${p[0]}|${p[1]||"compliance"}|${s.key}`; } catch {} }}
             className={`text-xs px-3 py-2 whitespace-nowrap border-b-2 -mb-px transition font-medium ${section === s.key ? "border-black text-black" : "border-transparent text-zinc-400 hover:text-zinc-700"}`}>
             {s.label}
           </button>

@@ -1250,7 +1250,7 @@ function LedgerTDSTracker({ expenses, bills, journals, orgId, fyProp, quarterPro
     const q = getQuarter(date);
     if (q !== quarter) return false;
     if (fyProp && fyProp !== "All") {
-      const fyStart = parseInt(fyProp.split("-")[0]);
+      const fyStart = parseInt(fyProp.replace("FY ", "").split("-")[0]);
       const d = new Date(date);
       const m = d.getMonth(); // 0-indexed
       const y = d.getFullYear();

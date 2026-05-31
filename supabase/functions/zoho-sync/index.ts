@@ -30,8 +30,17 @@ async function fetchAll(token: string, orgId: string, endpoint: string, listKey:
   while (true) {
     const url = `https://www.zohoapis.in/books/v3/${endpoint}?organization_id=${orgId}&page=${page}&per_page=200`;
     const res = await fetch(url, { headers: { Authorization: `Zoho-oauthtoken ${token}` } });
-    if (!res.ok) { console.error(`${endpoint} page ${page} failed: ${res.status}`); break; }
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      console.error(`${endpoint} page ${page} failed: ${res.status} - ${errText.slice(0, 200)}`);
+      break;
+    }
     const data = await res.json();
+    // Check for Zoho API errors in response body
+    if (data.code && data.code !== 0) {
+      console.error(`${endpoint} API error: code=${data.code} message=${data.message}`);
+      break;
+    }
     const items: any[] = data[listKey] || [];
     results.push(...items);
     if (items.length < 200 || !data.page_context?.has_more_page) break;
@@ -140,7 +149,7 @@ function mapInvoice(inv: any, orgId: string) {
     tax_total: Number(inv.tax_total || 0),
     total: Number(inv.total || 0),
     balance: Number(inv.balance || 0),
-    currency_code: inv.currency_code,
+    currency_code: inv.currency_code || "INR",
     created_time: inv.created_time, last_modified_time: inv.last_modified_time,
   };
 }
@@ -170,7 +179,7 @@ function mapCustomerPayment(p: any, orgId: string) {
     amount: Number(p.amount || 0),
     bank_charges: Number(p.bank_charges || 0),
     tax_amount_withheld: Number(p.tax_amount_withheld || 0),  // TDS withheld
-    currency_code: p.currency_code,
+    currency_code: p.currency_code || "INR",
     date: p.date,
     reference_number: p.reference_number || null,
     invoices: p.invoices ? JSON.stringify(p.invoices) : null, // which invoices settled
@@ -297,14 +306,14 @@ function mapVendorCredit(c: any, orgId: string) {
 function mapJournal(j: any, orgId: string) {
   return {
     id: j.journal_id, org_id: orgId,
-    journal_date: j.journal_date,
-    entry_number: j.entry_number || null,
+    journal_date: j.journal_date || j.date || null,
+    entry_number: j.entry_number || j.journal_number || null,
     reference_number: j.reference_number || null,
-    notes: j.notes || null,
-    total: Number(j.total || 0),
-    currency_code: j.currency_code || null,
+    notes: j.notes || j.description || null,
+    total: Number(j.total || j.debit_or_credit_total || 0),
+    currency_code: j.currency_code || j.currency_id || "INR",
     status: j.status || null,
-    line_items: j.line_items ? JSON.stringify(j.line_items) : null, // debit/credit lines
+    line_items: j.line_items ? JSON.stringify(j.line_items) : null,
     created_time: j.created_time, last_modified_time: j.last_modified_time,
   };
 }

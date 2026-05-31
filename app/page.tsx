@@ -1475,3 +1475,4 @@ export default function Home() {
   if (!mounted) return <div className="min-h-screen bg-white flex items-center justify-center"><p className="text-zinc-400 text-sm animate-pulse">Loading...</p></div>;
   return <HomeInner />;
 }
+  

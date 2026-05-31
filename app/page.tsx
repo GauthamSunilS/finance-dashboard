@@ -270,12 +270,13 @@ function AccountingModule({ orgId }: { orgId: string }) {
       {section === "invoices" && (() => {
         const d = filterByFYMonth(invoices, fy, month).filter(i => i.invoice_number?.toLowerCase().includes(search.toLowerCase()) || i.customer_name?.toLowerCase().includes(search.toLowerCase()));
         const total = d.reduce((s, i) => s + i.total, 0); const balance = d.reduce((s, i) => s + i.balance, 0); const gst = d.reduce((s, i) => s + i.tax_total, 0);
+        const cur = d[0]?.currency_code || "INR";
         return (
           <div className="space-y-4">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <Card label="Total Invoiced" value={inr(total)} />
-              <Card label="Outstanding" value={inr(balance)} color="text-amber-600" />
-              <Card label="GST Collected" value={inr(gst)} color="text-blue-600" />
+              <Card label="Total Invoiced" value={fmt(total, cur)} />
+              <Card label="Outstanding" value={fmt(balance, cur)} color="text-amber-600" />
+              <Card label="GST Collected" value={fmt(gst, cur)} color="text-blue-600" />
               <Card label="Paid / Total" value={`${d.filter(i => i.status === "paid").length} / ${d.length}`} color="text-emerald-600" />
             </div>
             <Table cols={["Invoice #", "Customer", "Date", "Due", "Status", "Subtotal", "GST", "Total", "Balance"]}
@@ -1475,4 +1476,3 @@ export default function Home() {
   if (!mounted) return <div className="min-h-screen bg-white flex items-center justify-center"><p className="text-zinc-400 text-sm animate-pulse">Loading...</p></div>;
   return <HomeInner />;
 }
-  

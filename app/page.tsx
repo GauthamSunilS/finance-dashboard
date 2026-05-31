@@ -2,6 +2,31 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 
+
+// ─── Pending Changes Queue ────────────────────────────────────────────────────
+type PendingChange = {
+  id: string; org_id: string; module: string; action: "create" | "update" | "delete";
+  record_id: string | null; payload: any; status: string; error: string | null; created_at: string;
+};
+
+async function queueChange(orgId: string, module: string, action: "create" | "update" | "delete", recordId: string | null, payload: any) {
+  const { error } = await supabase.from("pending_changes").insert({
+    org_id: orgId, module, action, record_id: recordId, payload, status: "pending"
+  });
+  return !error;
+}
+
+// Zoho API endpoints for each module
+const ZOHO_ENDPOINTS: Record<string, { path: string; idField: string; listKey: string }> = {
+  invoices:        { path: "invoices",        idField: "invoice_id",        listKey: "invoice" },
+  expenses:        { path: "expenses",        idField: "expense_id",        listKey: "expense" },
+  bills:           { path: "bills",           idField: "bill_id",           listKey: "bill" },
+  journals:        { path: "journals",        idField: "journal_id",        listKey: "journal" },
+  payments:        { path: "customerpayments",idField: "payment_id",        listKey: "payment" },
+  vendor_payments: { path: "vendorpayments",  idField: "payment_id",        listKey: "payment" },
+  sales_orders:    { path: "salesorders",     idField: "salesorder_id",     listKey: "salesorder" },
+};
+
 const COMPANY_LOGO = "/logo.png";
 const COMPANY_NAME = "Gautham & Associates";
 
@@ -193,8 +218,303 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
 }
 
 
+
+// ─── Modal ────────────────────────────────────────────────────────────────────
+function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-200">
+          <h2 className="font-bold text-zinc-900">{title}</h2>
+          <button onClick={onClose} className="text-zinc-400 hover:text-black text-xl leading-none">×</button>
+        </div>
+        <div className="px-6 py-5">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1">
+      <label className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function Input({ value, onChange, type = "text", placeholder = "" }: { value: string; onChange: (v: string) => void; type?: string; placeholder?: string }) {
+  return (
+    <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+      className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-black transition" />
+  );
+}
+
+function Select({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: { value: string; label: string }[] }) {
+  return (
+    <select value={value} onChange={e => onChange(e.target.value)}
+      className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-black transition bg-white">
+      {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  );
+}
+
+// ─── Pending Changes Panel ────────────────────────────────────────────────────
+function PendingChangesPanel({ orgId, onClose }: { orgId: string; onClose: () => void }) {
+  const [changes, setChanges] = useState<PendingChange[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [pushing, setPushing] = useState<string | null>(null);
+
+  useEffect(() => {
+    supabase.from("pending_changes").select("*").eq("org_id", orgId)
+      .in("status", ["pending", "failed"]).order("created_at", { ascending: false })
+      .then(({ data }) => { setChanges(data || []); setLoading(false); });
+  }, [orgId]);
+
+  async function pushChange(change: PendingChange) {
+    setPushing(change.id);
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/zoho-write`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ change_id: change.id, org_id: orgId }),
+      });
+      const result = await res.json();
+      if (result.success) {
+        setChanges(prev => prev.filter(c => c.id !== change.id));
+      } else {
+        setChanges(prev => prev.map(c => c.id === change.id ? { ...c, status: "failed", error: result.error } : c));
+      }
+    } catch (e: any) {
+      setChanges(prev => prev.map(c => c.id === change.id ? { ...c, status: "failed", error: e.message } : c));
+    }
+    setPushing(null);
+  }
+
+  async function pushAll() {
+    const pending = changes.filter(c => c.status === "pending");
+    for (const c of pending) await pushChange(c);
+  }
+
+  async function discard(id: string) {
+    await supabase.from("pending_changes").delete().eq("id", id);
+    setChanges(prev => prev.filter(c => c.id !== id));
+  }
+
+  return (
+    <Modal title={`Pending Changes (${changes.length})`} onClose={onClose}>
+      {loading ? <p className="text-center py-8 text-zinc-400">Loading...</p> : changes.length === 0 ? (
+        <div className="text-center py-10">
+          <p className="text-3xl mb-2">✓</p>
+          <p className="text-zinc-500 font-medium">No pending changes</p>
+          <p className="text-xs text-zinc-400 mt-1">All changes have been pushed to Zoho</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-zinc-500">{changes.filter(c => c.status === "pending").length} pending · {changes.filter(c => c.status === "failed").length} failed</p>
+            <button onClick={pushAll} className="text-xs bg-black text-white px-4 py-1.5 rounded-lg hover:bg-zinc-800 transition font-medium">
+              Push All to Zoho →
+            </button>
+          </div>
+          <div className="space-y-2">
+            {changes.map(c => (
+              <div key={c.id} className={`border rounded-xl p-4 ${c.status === "failed" ? "border-red-200 bg-red-50" : "border-zinc-200 bg-white"}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${c.action === "create" ? "bg-emerald-100 text-emerald-700" : c.action === "delete" ? "bg-red-100 text-red-700" : "bg-blue-100 text-blue-700"}`}>
+                        {c.action.toUpperCase()}
+                      </span>
+                      <span className="text-xs font-medium text-zinc-600 capitalize">{c.module.replace("_", " ")}</span>
+                      {c.record_id && <span className="text-xs font-mono text-zinc-400">{c.record_id.slice(-10)}</span>}
+                    </div>
+                    <p className="text-xs text-zinc-500">{JSON.stringify(c.payload).slice(0, 120)}...</p>
+                    {c.error && <p className="text-xs text-red-600 mt-1">Error: {c.error}</p>}
+                    <p className="text-xs text-zinc-300 mt-1">{new Date(c.created_at).toLocaleString("en-IN")}</p>
+                  </div>
+                  <div className="flex gap-2 flex-shrink-0">
+                    <button onClick={() => pushChange(c)} disabled={pushing === c.id}
+                      className="text-xs bg-black text-white px-3 py-1 rounded-lg hover:bg-zinc-800 disabled:opacity-50 transition">
+                      {pushing === c.id ? "..." : "Push"}
+                    </button>
+                    <button onClick={() => discard(c.id)} className="text-xs border border-zinc-200 px-3 py-1 rounded-lg hover:bg-zinc-100 transition text-zinc-500">
+                      Discard
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// ─── Edit/Create forms ────────────────────────────────────────────────────────
+
+function ExpenseForm({ orgId, expense, onSave, onClose }: { orgId: string; expense?: Expense | null; onSave: () => void; onClose: () => void }) {
+  const [date, setDate] = useState(expense?.date || new Date().toISOString().slice(0, 10));
+  const [account, setAccount] = useState(expense?.account_name || "");
+  const [vendor, setVendor] = useState(expense?.vendor_name || "");
+  const [amount, setAmount] = useState(String(expense?.total || ""));
+  const [description, setDescription] = useState(expense?.description || "");
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    setSaving(true);
+    const payload = { date, account_name: account, vendor_name: vendor, total: Number(amount), description, currency_code: "INR" };
+    const ok = await queueChange(orgId, "expenses", expense ? "update" : "create", expense?.id || null, payload);
+    if (ok) { onSave(); onClose(); }
+    setSaving(false);
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-4">
+        <Field label="Date"><Input type="date" value={date} onChange={setDate} /></Field>
+        <Field label="Amount (₹)"><Input type="number" value={amount} onChange={setAmount} placeholder="0.00" /></Field>
+        <Field label="Account/Category"><Input value={account} onChange={setAccount} placeholder="e.g. Software Expenses" /></Field>
+        <Field label="Vendor"><Input value={vendor} onChange={setVendor} placeholder="e.g. Zoho Corporation" /></Field>
+      </div>
+      <Field label="Description"><Input value={description} onChange={setDescription} placeholder="Notes" /></Field>
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700">
+        ⚠ This change will be queued for your review before being pushed to Zoho.
+      </div>
+      <div className="flex gap-3 justify-end">
+        <button onClick={onClose} className="text-sm px-4 py-2 border border-zinc-200 rounded-lg hover:bg-zinc-50 transition">Cancel</button>
+        <button onClick={save} disabled={saving || !amount || !date} className="text-sm px-4 py-2 bg-black text-white rounded-lg hover:bg-zinc-800 disabled:opacity-50 transition">
+          {saving ? "Queuing..." : "Queue Change"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function JournalForm({ orgId, journal, onSave, onClose }: { orgId: string; journal?: Journal | null; onSave: () => void; onClose: () => void }) {
+  const [date, setDate] = useState(journal?.journal_date || new Date().toISOString().slice(0, 10));
+  const [notes, setNotes] = useState(journal?.notes || "");
+  const [lines, setLines] = useState<{ account: string; debit: string; credit: string }[]>(() => {
+    try {
+      const parsed = JSON.parse(journal?.line_items || "[]");
+      return parsed.length > 0 ? parsed.map((l: any) => ({ account: l.account_name || "", debit: l.debit_or_credit === "debit" ? String(l.amount) : "", credit: l.debit_or_credit === "credit" ? String(l.amount) : "" })) : [{ account: "", debit: "", credit: "" }, { account: "", debit: "", credit: "" }];
+    } catch { return [{ account: "", debit: "", credit: "" }, { account: "", debit: "", credit: "" }]; }
+  });
+  const [saving, setSaving] = useState(false);
+
+  const totalDebit = lines.reduce((s, l) => s + (Number(l.debit) || 0), 0);
+  const totalCredit = lines.reduce((s, l) => s + (Number(l.credit) || 0), 0);
+  const balanced = Math.abs(totalDebit - totalCredit) < 0.01;
+
+  function addLine() { setLines(prev => [...prev, { account: "", debit: "", credit: "" }]); }
+  function removeLine(i: number) { setLines(prev => prev.filter((_, j) => j !== i)); }
+  function updateLine(i: number, field: string, val: string) { setLines(prev => prev.map((l, j) => j === i ? { ...l, [field]: val } : l)); }
+
+  async function save() {
+    setSaving(true);
+    const payload = {
+      journal_date: date, notes,
+      line_items: lines.filter(l => l.account).map(l => ({
+        account_name: l.account,
+        debit_or_credit: Number(l.debit) > 0 ? "debit" : "credit",
+        amount: Number(l.debit) || Number(l.credit),
+      }))
+    };
+    const ok = await queueChange(orgId, "journals", journal ? "update" : "create", journal?.id || null, payload);
+    if (ok) { onSave(); onClose(); }
+    setSaving(false);
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-4">
+        <Field label="Journal Date"><Input type="date" value={date} onChange={setDate} /></Field>
+        <Field label="Notes / Reference"><Input value={notes} onChange={setNotes} placeholder="e.g. Payroll-25" /></Field>
+      </div>
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Journal Lines</label>
+          <button onClick={addLine} className="text-xs text-blue-600 hover:underline">+ Add Line</button>
+        </div>
+        <div className="border border-zinc-200 rounded-xl overflow-hidden">
+          <table className="w-full text-sm">
+            <thead><tr className="bg-zinc-50 border-b border-zinc-200 text-xs text-zinc-500">
+              <th className="text-left px-3 py-2">Account</th>
+              <th className="text-right px-3 py-2">Debit</th>
+              <th className="text-right px-3 py-2">Credit</th>
+              <th className="px-3 py-2 w-8"></th>
+            </tr></thead>
+            <tbody>
+              {lines.map((line, i) => (
+                <tr key={i} className="border-b border-zinc-100 last:border-0">
+                  <td className="px-3 py-1.5"><input value={line.account} onChange={e => updateLine(i, "account", e.target.value)} placeholder="Account name" className="w-full border border-zinc-200 rounded px-2 py-1 text-xs focus:outline-none focus:border-black" /></td>
+                  <td className="px-3 py-1.5"><input type="number" value={line.debit} onChange={e => updateLine(i, "debit", e.target.value)} placeholder="0" className="w-full border border-zinc-200 rounded px-2 py-1 text-xs text-right focus:outline-none focus:border-black" /></td>
+                  <td className="px-3 py-1.5"><input type="number" value={line.credit} onChange={e => updateLine(i, "credit", e.target.value)} placeholder="0" className="w-full border border-zinc-200 rounded px-2 py-1 text-xs text-right focus:outline-none focus:border-black" /></td>
+                  <td className="px-3 py-1.5 text-center"><button onClick={() => removeLine(i)} className="text-zinc-300 hover:text-red-500 text-lg leading-none">×</button></td>
+                </tr>
+              ))}
+              <tr className={`border-t-2 text-xs font-bold ${balanced ? "text-emerald-600 border-emerald-200" : "text-red-600 border-red-200"}`}>
+                <td className="px-3 py-2">{balanced ? "✓ Balanced" : "✗ Not balanced"}</td>
+                <td className="px-3 py-2 text-right">{inr(totalDebit)}</td>
+                <td className="px-3 py-2 text-right">{inr(totalCredit)}</td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700">
+        ⚠ This change will be queued for your review before being pushed to Zoho.
+      </div>
+      <div className="flex gap-3 justify-end">
+        <button onClick={onClose} className="text-sm px-4 py-2 border border-zinc-200 rounded-lg hover:bg-zinc-50 transition">Cancel</button>
+        <button onClick={save} disabled={saving || !balanced || !date} className="text-sm px-4 py-2 bg-black text-white rounded-lg hover:bg-zinc-800 disabled:opacity-50 transition">
+          {saving ? "Queuing..." : "Queue Change"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function BillForm({ orgId, bill, onSave, onClose }: { orgId: string; bill?: Bill | null; onSave: () => void; onClose: () => void }) {
+  const [date, setDate] = useState(bill?.date || new Date().toISOString().slice(0, 10));
+  const [dueDate, setDueDate] = useState(bill?.due_date || "");
+  const [vendor, setVendor] = useState(bill?.vendor_name || "");
+  const [billNumber, setBillNumber] = useState(bill?.bill_number || "");
+  const [amount, setAmount] = useState(String(bill?.total || ""));
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    setSaving(true);
+    const payload = { date, due_date: dueDate, vendor_name: vendor, bill_number: billNumber, total: Number(amount) };
+    const ok = await queueChange(orgId, "bills", bill ? "update" : "create", bill?.id || null, payload);
+    if (ok) { onSave(); onClose(); }
+    setSaving(false);
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-4">
+        <Field label="Bill #"><Input value={billNumber} onChange={setBillNumber} placeholder="e.g. INV-001" /></Field>
+        <Field label="Vendor"><Input value={vendor} onChange={setVendor} placeholder="Vendor name" /></Field>
+        <Field label="Bill Date"><Input type="date" value={date} onChange={setDate} /></Field>
+        <Field label="Due Date"><Input type="date" value={dueDate} onChange={setDueDate} /></Field>
+        <Field label="Amount (₹)"><Input type="number" value={amount} onChange={setAmount} placeholder="0.00" /></Field>
+      </div>
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700">⚠ Queued for review before pushing to Zoho.</div>
+      <div className="flex gap-3 justify-end">
+        <button onClick={onClose} className="text-sm px-4 py-2 border border-zinc-200 rounded-lg hover:bg-zinc-50">Cancel</button>
+        <button onClick={save} disabled={saving || !amount || !vendor} className="text-sm px-4 py-2 bg-black text-white rounded-lg hover:bg-zinc-800 disabled:opacity-50 transition">
+          {saving ? "Queuing..." : "Queue Change"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Journal Table (expandable) ──────────────────────────────────────────────
-function JournalTable({ journals }: { journals: Journal[] }) {
+function JournalTable({ journals, onEdit, onDelete }: { journals: Journal[]; onEdit?: (j: Journal) => void; onDelete?: (j: Journal) => void }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   if (journals.length === 0) return <div className="text-center py-10 text-zinc-400 text-sm bg-white border border-zinc-200 rounded-xl">No journal entries — sync from Zoho</div>;
   return (
@@ -295,6 +615,34 @@ function AccountingModule({ orgId }: { orgId: string }) {
   const [search, setSearch] = useState("");
   const [fy, setFy] = useState("All");
   const [month, setMonth] = useState("All");
+  const [modal, setModal] = useState<{ type: string; record?: any } | null>(null);
+  const [showPending, setShowPending] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
+
+  useEffect(() => {
+    supabase.from("pending_changes").select("id", { count: "exact" }).eq("org_id", orgId).eq("status", "pending")
+      .then(({ count }) => setPendingCount(count || 0));
+  }, [orgId, modal]);
+
+  function reload() {
+    setLoading(true);
+    Promise.all([
+      supabase.from("finance_dashboard").select("*").eq("org_id", orgId).order("date", { ascending: false }),
+      supabase.from("sales_orders").select("*").eq("org_id", orgId).order("date", { ascending: false }),
+      supabase.from("estimates").select("*").eq("org_id", orgId).order("date", { ascending: false }),
+      supabase.from("payments").select("*").eq("org_id", orgId).order("date", { ascending: false }),
+      supabase.from("expenses").select("*").eq("org_id", orgId).order("date", { ascending: false }),
+      supabase.from("bills").select("*").eq("org_id", orgId).order("date", { ascending: false }),
+      supabase.from("purchase_orders").select("*").eq("org_id", orgId).order("date", { ascending: false }),
+      supabase.from("vendor_payments").select("*").eq("org_id", orgId).order("date", { ascending: false }),
+      supabase.from("journals").select("*").eq("org_id", orgId).order("journal_date", { ascending: false }),
+    ]).then(([inv, so, est, pay, exp, bil, po, vp, jrn]) => {
+      setInvoices(inv.data || []); setSalesOrders(so.data || []); setEstimates(est.data || []);
+      setPayments(pay.data || []); setExpenses(exp.data || []); setBills(bil.data || []);
+      setPurchaseOrders(po.data || []); setVendorPayments(vp.data || []); setJournals(jrn.data || []);
+      setLoading(false);
+    });
+  }
 
   useEffect(() => {
     Promise.all([
@@ -339,6 +687,18 @@ function AccountingModule({ orgId }: { orgId: string }) {
             {s.label} <span className="text-zinc-300 ml-1">{s.count}</span>
           </button>
         ))}
+      </div>
+
+      {/* Pending Changes + New Entry */}
+      <div className="flex items-center gap-2 justify-between flex-wrap">
+        <div className="flex gap-2">
+          {section === "expenses" && <button onClick={() => setModal({ type: "expense" })} className="text-xs bg-black text-white px-3 py-1.5 rounded-lg hover:bg-zinc-800 transition">+ New Expense</button>}
+          {section === "journals" && <button onClick={() => setModal({ type: "journal" })} className="text-xs bg-black text-white px-3 py-1.5 rounded-lg hover:bg-zinc-800 transition">+ New Journal</button>}
+          {section === "bills" && <button onClick={() => setModal({ type: "bill" })} className="text-xs bg-black text-white px-3 py-1.5 rounded-lg hover:bg-zinc-800 transition">+ New Bill</button>}
+        </div>
+        <button onClick={() => setShowPending(true)} className={`text-xs px-3 py-1.5 rounded-lg border transition flex items-center gap-1.5 ${pendingCount > 0 ? "bg-amber-50 border-amber-300 text-amber-700 font-semibold" : "border-zinc-200 text-zinc-400"}`}>
+          {pendingCount > 0 ? `⏳ ${pendingCount} Pending Changes` : "No Pending Changes"}
+        </button>
       </div>
 
       {/* Search + FY Filter */}
@@ -461,7 +821,7 @@ function AccountingModule({ orgId }: { orgId: string }) {
               <Card label="GST Paid" value={inr(gst)} color="text-blue-600" />
               <Card label="Total Amount" value={inr(total)} color="text-red-600" />
             </div>
-            <Table cols={["Ref", "Account", "Vendor", "Date", "Status", "Taxable", "GST", "Total"]}
+            <Table cols={["Ref", "Account", "Vendor", "Date", "Status", "Taxable", "GST", "Total", ""]}
               rows={d.map(e => [
                 <span className="font-mono text-xs text-zinc-500">{e.expense_number?.slice(-10) || "—"}</span>,
                 <span className="text-xs">{e.account_name || "—"}</span>,
@@ -506,7 +866,7 @@ function AccountingModule({ orgId }: { orgId: string }) {
               <Card label="Outstanding" value={fmt(d.reduce((s, i) => s + i.balance, 0), d[0]?.currency_code)} color="text-amber-600" />
               <Card label="Total Value" value={fmt(d.reduce((s, i) => s + i.total, 0), d[0]?.currency_code)} />
             </div>
-            <Table cols={["Bill #", "Vendor", "Date", "Due", "Status", "Total", "Balance"]}
+            <Table cols={["Bill #", "Vendor", "Date", "Due", "Status", "Total", "Balance", ""]}
               rows={d.map(b => [
                 <span className="font-mono text-xs text-zinc-500">{b.bill_number}</span>,
                 b.vendor_name, fdate(b.date), fdate(b.due_date), <Badge s={b.status} />,
@@ -549,11 +909,17 @@ function AccountingModule({ orgId }: { orgId: string }) {
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700">
               ⚠ Journal entries bypass automated TDS/GST checks. Each entry below is flagged for manual review in the Internal Audit module.
             </div>
-            <JournalTable journals={d} />
+            <JournalTable journals={d} onEdit={j => setModal({ type: "journal", record: j })} onDelete={async j => { await queueChange(orgId, "journals", "delete", j.id, {}); setPendingCount(c => c + 1); }} />
           </div>
         );
       })()}
     </div>
+
+    {/* Modals */}
+    {showPending && <PendingChangesPanel orgId={orgId} onClose={() => setShowPending(false)} />}
+    {modal?.type === "expense" && <Modal title={modal.record ? "Edit Expense" : "New Expense"} onClose={() => setModal(null)}><ExpenseForm orgId={orgId} expense={modal.record} onSave={() => { reload(); setPendingCount(c => c + 1); }} onClose={() => setModal(null)} /></Modal>}
+    {modal?.type === "journal" && <Modal title={modal.record ? "Edit Journal" : "New Journal Entry"} onClose={() => setModal(null)}><JournalForm orgId={orgId} journal={modal.record} onSave={() => { reload(); setPendingCount(c => c + 1); }} onClose={() => setModal(null)} /></Modal>}
+    {modal?.type === "bill" && <Modal title={modal.record ? "Edit Bill" : "New Bill"} onClose={() => setModal(null)}><BillForm orgId={orgId} bill={modal.record} onSave={() => { reload(); setPendingCount(c => c + 1); }} onClose={() => setModal(null)} /></Modal>}
   );
 }
 

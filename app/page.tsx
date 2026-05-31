@@ -1105,7 +1105,7 @@ const getQuarter = (date: string) => {
   return "Q4 (Jan-Mar)";
 };
 
-function LedgerTDSTracker({ expenses, bills, orgId }: {
+function LedgerTDSTracker({ expenses, bills, journals, orgId }: {
   expenses: Expense[]; bills: Bill[]; vendorPayments: VendorPayment[]; journals: Journal[]; orgId: string;
 }) {
   const [rows, setRows] = React.useState<TDSTxnRow[]>([]);

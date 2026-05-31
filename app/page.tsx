@@ -1,960 +1,533 @@
 "use client";
-
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 
 const COMPANY_LOGO = "/logo.png";
 const COMPANY_NAME = "Gautham & Associates";
 
-// ============================================
-// TYPES
-// ============================================
-type Client = {
-  id: string;
-  name: string;
-  source: "zoho" | "odoo";
-  org_id: string | null;
-};
+// ─── Types ────────────────────────────────────────────────────────────────────
+type Client = { id: string; name: string; source: string; org_id: string | null };
+type Invoice = { id: string; invoice_number: string; customer_name: string; status: string; date: string; due_date: string; sub_total: number; tax_total: number; total: number; balance: number; currency_code: string | null; reference_number: string | null; gst_number: string | null };
+type SalesOrder = { id: string; salesorder_number: string; customer_name: string; status: string; date: string; shipment_date: string | null; total: number; billed_status: string | null; currency_code: string | null };
+type Estimate = { id: string; estimate_number: string; customer_name: string; status: string; date: string; expiry_date: string | null; total: number; currency_code: string | null };
+type Payment = { id: string; payment_number: string; customer_name: string; payment_mode: string | null; amount: number; currency_code: string | null; date: string; reference_number: string | null };
+type Expense = { id: string; expense_number: string | null; account_name: string | null; vendor_name: string | null; status: string; date: string; total: number; sub_total: number; tax_total: number; currency_code: string | null; description: string | null };
+type Bill = { id: string; bill_number: string; vendor_name: string; status: string; date: string; due_date: string | null; total: number; balance: number; currency_code: string | null; purchaseorder_id: string | null };
+type PurchaseOrder = { id: string; purchaseorder_number: string; vendor_name: string; status: string; date: string; total: number; billed_status: string | null; received_status: string | null; currency_code: string | null };
+type VendorPayment = { id: string; payment_number: string | null; vendor_name: string; amount: number; date: string; payment_mode: string | null; currency_code: string | null };
+type Journal = { id: string; journal_date: string; entry_number: string | null; notes: string | null; total: number; line_items: string | null };
 
-type Invoice = {
-  id: string; invoice_number: string; customer_name: string;
-  status: string; date: string; due_date: string;
-  sub_total: number; tax_total: number; total: number;
-  balance: number; currency_code: string; reference_number: string | null;
-  gst_number: string | null;
-};
+type Module = "accounting" | "audit" | "compliance";
+type AcctSection = "invoices" | "sales_orders" | "estimates" | "payments" | "expenses" | "purchases" | "bills" | "vendor_payments" | "journals";
+type AuditSection = "overview" | "customers" | "so_match" | "po_match" | "gst" | "tds" | "findings";
+type CompSection = "summary" | "gst_filing" | "tds_filing" | "pt_pf" | "it_filing";
 
-type SalesOrder = {
-  id: string; salesorder_number: string; customer_name: string;
-  status: string; date: string; shipment_date: string;
-  sub_total: number; tax_total: number; total: number; currency_code: string;
-};
-
-type Estimate = {
-  id: string; estimate_number: string; customer_name: string;
-  status: string; date: string; expiry_date: string;
-  sub_total: number; tax_total: number; total: number; currency_code: string;
-};
-
-type Payment = {
-  id: string; payment_number: string; customer_name: string;
-  payment_mode: string; amount: number; currency_code: string;
-  date: string; reference_number: string | null;
-};
-
-type Expense = {
-  id: string; expense_number: string; account_name: string | null;
-  vendor_name: string | null; status: string; date: string;
-  total: number; sub_total: number; tax_total: number;
-  currency_code: string | null; description: string | null;
-  reference_number: string | null; is_billable: boolean | null;
-  customer_name: string | null; paid_through_account_name: string | null;
-};
-
-type SubModule = "invoices" | "sales_orders" | "estimates" | "payments" | "expenses" | "audit";
-
-// ============================================
-// HELPERS
-// ============================================
-function fmt(amount: number, currency?: string | null) {
-  const safeCurrency = (currency && currency !== "null") ? currency : "USD";
-  const locale = safeCurrency === "INR" ? "en-IN" : "en-US";
-  try {
-    return new Intl.NumberFormat(locale, {
-      style: "currency", currency: safeCurrency, maximumFractionDigits: 0,
-    }).format(amount);
-  } catch { return String(amount); }
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function fmt(n: number, currency?: string | null) {
+  const c = (currency && currency !== "null") ? currency : "INR";
+  try { return new Intl.NumberFormat(c === "INR" ? "en-IN" : "en-US", { style: "currency", currency: c, maximumFractionDigits: 0 }).format(n); }
+  catch { return "₹" + n.toLocaleString("en-IN"); }
 }
-
-function inrFmt(n: number) { return "₹" + Math.abs(n).toLocaleString("en-IN"); }
-
-function fmtDate(d: string | null | undefined) {
-  if (!d || d === "null") return "—";
-  return new Date(d).toLocaleDateString("en-IN", {
-    day: "2-digit", month: "short", year: "numeric",
-  });
+function inr(n: number) { return "₹" + Math.abs(n).toLocaleString("en-IN"); }
+function fdate(d: string | null | undefined) {
+  if (!d) return "—";
+  try { return new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); }
+  catch { return d; }
 }
+function daysDiff(d: string) { return Math.floor((new Date().getTime() - new Date(d).getTime()) / 86400000); }
 
-const STATUS_COLORS: Record<string, string> = {
-  paid: "bg-emerald-100 text-emerald-700",
-  sent: "bg-blue-100 text-blue-700",
-  draft: "bg-zinc-100 text-zinc-500",
-  overdue: "bg-red-100 text-red-600",
-  void: "bg-orange-100 text-orange-600",
-  accepted: "bg-emerald-100 text-emerald-700",
-  declined: "bg-red-100 text-red-600",
-  invoiced: "bg-purple-100 text-purple-700",
-  confirmed: "bg-blue-100 text-blue-700",
+const SC: Record<string, string> = {
+  paid: "bg-emerald-100 text-emerald-700", sent: "bg-blue-100 text-blue-700",
+  draft: "bg-zinc-100 text-zinc-500", overdue: "bg-red-100 text-red-600",
+  void: "bg-orange-100 text-orange-600", accepted: "bg-emerald-100 text-emerald-700",
+  declined: "bg-red-100 text-red-600", confirmed: "bg-blue-100 text-blue-700",
+  open: "bg-blue-100 text-blue-700", closed: "bg-zinc-100 text-zinc-500",
+  billed: "bg-purple-100 text-purple-700", partial: "bg-amber-100 text-amber-700",
+  pending: "bg-amber-100 text-amber-700", nonbillable: "bg-zinc-100 text-zinc-400",
 };
-
-function Badge({ status }: { status: string }) {
-  return (
-    <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${STATUS_COLORS[status] || "bg-zinc-100 text-zinc-400"}`}>
-      {status}
-    </span>
-  );
+function Badge({ s }: { s: string }) {
+  return <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${SC[s?.toLowerCase()] || "bg-zinc-100 text-zinc-400"}`}>{s || "—"}</span>;
 }
-
-function SummaryCard({ label, value, color }: { label: string; value: string; color: string }) {
+function Card({ label, value, sub, color = "text-zinc-900" }: { label: string; value: string; sub?: string; color?: string }) {
   return (
     <div className="bg-white border border-zinc-200 rounded-xl p-4 shadow-sm">
       <p className="text-xs text-zinc-400 uppercase tracking-wide mb-1">{label}</p>
       <p className={`text-xl font-bold ${color}`}>{value}</p>
+      {sub && <p className="text-xs text-zinc-400 mt-0.5">{sub}</p>}
+    </div>
+  );
+}
+function Table({ cols, rows, empty = "No data" }: { cols: string[]; rows: React.ReactNode[][]; empty?: string }) {
+  return (
+    <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden shadow-sm">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-zinc-200 bg-zinc-50">
+              {cols.map((c, i) => <th key={i} className={`px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide ${i > 1 ? "text-right" : "text-left"}`}>{c}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0
+              ? <tr><td colSpan={cols.length} className="text-center py-10 text-zinc-400 text-sm">{empty}</td></tr>
+              : rows.map((row, i) => (
+                <tr key={i} className="border-b border-zinc-100 last:border-0 hover:bg-zinc-50">
+                  {row.map((cell, j) => <td key={j} className={`px-4 py-3 ${j > 1 ? "text-right" : "text-left"} text-zinc-700`}>{cell}</td>)}
+                </tr>
+              ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
 
-// ============================================
-// LOGIN
-// ============================================
-function LoginScreen({ onLogin }: { onLogin: () => void }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+// ─── TDS Rules ────────────────────────────────────────────────────────────────
+const TDS: { sec: string; label: string; kw: string[]; min: number; rate: number }[] = [
+  { sec: "194C", label: "194C – Contractors", kw: ["contractor","construction","transport","courier","logistics","freight","security","catering","cleaning","labour","manpower","event","fabrication"], min: 30000, rate: 2 },
+  { sec: "194J", label: "194J – Professional", kw: ["consultant","consulting","professional","legal","advocate","chartered","software","it service","technology","designer","freelancer","saas","advisory","audit"], min: 30000, rate: 10 },
+  { sec: "194H", label: "194H – Commission", kw: ["commission","brokerage","referral fee","agent fee","dealer commission"], min: 15000, rate: 5 },
+  { sec: "194I", label: "194I – Rent", kw: ["rent","lease","rental","property management","office space","premises","godown"], min: 50000, rate: 10 },
+  { sec: "194A", label: "194A – Interest", kw: ["interest paid","loan interest","bank charges","finance charges"], min: 5000, rate: 10 },
+];
+function inferTds(vendor: string, account: string, amount: number) {
+  const t = `${vendor} ${account}`.toLowerCase();
+  for (const r of TDS) { if (r.kw.some(k => t.includes(k)) && amount >= r.min) return r; }
+  return null;
+}
+const BLOCKED_ITC = ["food","canteen","catering","caterer","staff welfare","restaurant","meal","lunch","dinner","club membership","gym","personal","car hire","cab","taxi"];
+function isBlocked(account: string, vendor: string) { return BLOCKED_ITC.some(k => `${account} ${vendor}`.toLowerCase().includes(k)); }
 
+// ─── Login ────────────────────────────────────────────────────────────────────
+function LoginScreen({ onLogin }: { onLogin: () => void }) {
+  const [email, setEmail] = useState(""); const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null); const [loading, setLoading] = useState(false);
   async function handleLogin() {
-    setError(null);
-    setLoading(true);
+    setError(null); setLoading(true);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) setError(error.message);
-    else onLogin();
+    if (error) setError(error.message); else onLogin();
     setLoading(false);
   }
-
   return (
-    <div className="min-h-screen bg-white flex items-center justify-center p-4">
-      <div className="w-full max-w-sm bg-white border border-zinc-200 rounded-2xl p-8 space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-900 tracking-tight">Finance Dashboard</h1>
-          <p className="text-zinc-500 text-sm mt-1">Sign in to continue</p>
+    <div className="min-h-screen bg-zinc-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm bg-white border border-zinc-200 rounded-2xl p-8 shadow-sm space-y-6">
+        <div className="flex items-center gap-3 mb-2">
+          <img src={COMPANY_LOGO} alt="CA" className="h-10 w-auto" />
+          <div><p className="font-bold text-zinc-900 text-sm">{COMPANY_NAME}</p><p className="text-xs text-zinc-400">Finance Dashboard</p></div>
         </div>
         <div className="space-y-3">
           <div>
-            <label className="text-xs text-zinc-400 mb-1 block">Email</label>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              className="w-full bg-zinc-100 border border-zinc-300 rounded-lg px-4 py-2.5 text-sm text-zinc-900 placeholder-zinc-600 focus:outline-none focus:border-zinc-500" />
+            <label className="text-xs text-zinc-500 mb-1 block">Email</label>
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" className="w-full border border-zinc-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-black transition" />
           </div>
           <div>
-            <label className="text-xs text-zinc-400 mb-1 block">Password</label>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && handleLogin()}
-              placeholder="••••••••"
-              className="w-full bg-zinc-100 border border-zinc-300 rounded-lg px-4 py-2.5 text-sm text-zinc-900 placeholder-zinc-600 focus:outline-none focus:border-zinc-500" />
+            <label className="text-xs text-zinc-500 mb-1 block">Password</label>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && handleLogin()} placeholder="••••••••" className="w-full border border-zinc-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-black transition" />
           </div>
         </div>
-        {error && <p className="text-red-400 text-xs">{error}</p>}
-        <button onClick={handleLogin} disabled={loading}
-          className="w-full bg-white text-zinc-900 font-semibold text-sm py-2.5 rounded-lg hover:bg-zinc-200 transition disabled:opacity-50">
-          {loading ? "Signing in..." : "Sign In"}
-        </button>
+        {error && <p className="text-red-500 text-xs">{error}</p>}
+        <button onClick={handleLogin} disabled={loading} className="w-full bg-black text-white font-semibold text-sm py-2.5 rounded-lg hover:bg-zinc-800 transition disabled:opacity-50">{loading ? "Signing in..." : "Sign In"}</button>
       </div>
     </div>
   );
 }
 
-// ============================================
-// INVOICES TAB
-// ============================================
-function InvoicesTab({ clientId }: { clientId: string }) {
-  const [data, setData] = useState<Invoice[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-
-  useEffect(() => {
-    supabase.from("finance_dashboard").select("*")
-      .eq("org_id", clientId).order("date", { ascending: false })
-      .then(({ data }) => { setData(data || []); setLoading(false); });
-  }, [clientId]);
-
-  const statuses = ["all", ...Array.from(new Set(data.map(d => d.status)))];
-  const filtered = data.filter(inv =>
-    (statusFilter === "all" || inv.status === statusFilter) &&
-    (inv.customer_name?.toLowerCase().includes(search.toLowerCase()) ||
-      inv.invoice_number?.toLowerCase().includes(search.toLowerCase()))
-  );
-  const total = filtered.reduce((s, i) => s + i.total, 0);
-  const balance = filtered.reduce((s, i) => s + i.balance, 0);
-  const tax = filtered.reduce((s, i) => s + i.tax_total, 0);
-  const paid = filtered.filter(i => i.status === "paid").length;
-
-  if (loading) return <div className="text-center py-20 text-zinc-500">Loading...</div>;
-
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <SummaryCard label="Total Invoiced" value={fmt(total)} color="text-zinc-900" />
-        <SummaryCard label="Outstanding" value={fmt(balance)} color="text-amber-400" />
-        <SummaryCard label="GST Collected" value={fmt(tax)} color="text-blue-400" />
-        <SummaryCard label="Paid" value={`${paid} / ${filtered.length}`} color="text-emerald-400" />
-      </div>
-      <div className="flex gap-3">
-        <input value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="Search customer or invoice..."
-          className="flex-1 bg-white border border-zinc-200 rounded-lg px-4 py-2 text-sm text-zinc-800 placeholder-zinc-600 focus:outline-none" />
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-          className="bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-700 focus:outline-none">
-          {statuses.map(s => <option key={s} value={s}>{s === "all" ? "All Statuses" : s}</option>)}
-        </select>
-      </div>
-      <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-zinc-200 text-zinc-500 text-xs uppercase">
-                <th className="text-left px-4 py-3">Invoice</th>
-                <th className="text-left px-4 py-3">Customer</th>
-                <th className="text-left px-4 py-3">Date</th>
-                <th className="text-left px-4 py-3">Due</th>
-                <th className="text-left px-4 py-3">Status</th>
-                <th className="text-right px-4 py-3">Subtotal</th>
-                <th className="text-right px-4 py-3">GST</th>
-                <th className="text-right px-4 py-3">Total</th>
-                <th className="text-right px-4 py-3">Balance</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 ? (
-                <tr><td colSpan={9} className="text-center py-10 text-zinc-500">No invoices found</td></tr>
-              ) : filtered.map((inv, i) => (
-                <tr key={inv.id} className={`border-b border-zinc-100 hover:bg-zinc-50 ${i % 2 === 0 ? "" : "bg-zinc-50"}`}>
-                  <td className="px-4 py-3 font-mono text-zinc-400 text-xs">{inv.invoice_number}</td>
-                  <td className="px-4 py-3 font-medium text-zinc-900 max-w-[160px] truncate">
-                    {inv.customer_name}
-                    {inv.gst_number && <div className="text-xs text-zinc-500">{inv.gst_number}</div>}
-                  </td>
-                  <td className="px-4 py-3 text-zinc-400">{fmtDate(inv.date)}</td>
-                  <td className="px-4 py-3 text-zinc-400">{fmtDate(inv.due_date)}</td>
-                  <td className="px-4 py-3"><Badge status={inv.status} /></td>
-                  <td className="px-4 py-3 text-right text-zinc-700">{inv.sub_total > 0 ? fmt(inv.sub_total, inv.currency_code) : "—"}</td>
-                  <td className="px-4 py-3 text-right text-blue-400">{fmt(inv.tax_total, inv.currency_code)}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-zinc-900">{fmt(inv.total, inv.currency_code)}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-amber-400">{fmt(inv.balance, inv.currency_code)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="px-4 py-2 text-xs text-zinc-600 border-t border-zinc-200">
-          Showing {filtered.length} of {data.length} invoices
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ============================================
-// SALES ORDERS TAB
-// ============================================
-function SalesOrdersTab({ clientId }: { clientId: string }) {
-  const [data, setData] = useState<SalesOrder[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-
-  useEffect(() => {
-    supabase.from("sales_orders").select("*")
-      .eq("org_id", clientId).order("date", { ascending: false })
-      .then(({ data }) => { setData(data || []); setLoading(false); });
-  }, [clientId]);
-
-  const filtered = data.filter(s =>
-    s.customer_name?.toLowerCase().includes(search.toLowerCase()) ||
-    s.salesorder_number?.toLowerCase().includes(search.toLowerCase())
-  );
-  const total = filtered.reduce((s, i) => s + i.total, 0);
-
-  if (loading) return <div className="text-center py-20 text-zinc-500">Loading...</div>;
-
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-        <SummaryCard label="Total Orders" value={`${filtered.length}`} color="text-zinc-900" />
-        <SummaryCard label="Total Value" value={fmt(total)} color="text-blue-400" />
-        <SummaryCard label="Confirmed" value={`${filtered.filter(s => s.status === "confirmed").length}`} color="text-emerald-400" />
-      </div>
-      <input value={search} onChange={e => setSearch(e.target.value)}
-        placeholder="Search customer or order number..."
-        className="w-full bg-white border border-zinc-200 rounded-lg px-4 py-2 text-sm text-zinc-800 placeholder-zinc-600 focus:outline-none" />
-      <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-zinc-200 text-zinc-500 text-xs uppercase">
-                <th className="text-left px-4 py-3">Order #</th>
-                <th className="text-left px-4 py-3">Customer</th>
-                <th className="text-left px-4 py-3">Date</th>
-                <th className="text-left px-4 py-3">Shipment</th>
-                <th className="text-left px-4 py-3">Status</th>
-                <th className="text-right px-4 py-3">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 ? (
-                <tr><td colSpan={8} className="text-center py-10 text-zinc-500">No data yet — sync from Zoho to populate</td></tr>
-              ) : filtered.map((s, i) => (
-                <tr key={s.id} className={`border-b border-zinc-100 hover:bg-zinc-50 ${i % 2 === 0 ? "" : "bg-zinc-50"}`}>
-                  <td className="px-4 py-3 font-mono text-zinc-400 text-xs">{s.salesorder_number}</td>
-                  <td className="px-4 py-3 font-medium text-zinc-900">{s.customer_name}</td>
-                  <td className="px-4 py-3 text-zinc-400">{fmtDate(s.date)}</td>
-                  <td className="px-4 py-3 text-zinc-400">{fmtDate(s.shipment_date)}</td>
-                  <td className="px-4 py-3"><Badge status={s.status} /></td>
-                  <td className="px-4 py-3 text-right font-semibold text-zinc-900">{fmt(s.total, s.currency_code)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ============================================
-// ESTIMATES TAB
-// ============================================
-function EstimatesTab({ clientId }: { clientId: string }) {
-  const [data, setData] = useState<Estimate[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-
-  useEffect(() => {
-    supabase.from("estimates").select("*")
-      .eq("org_id", clientId).order("date", { ascending: false })
-      .then(({ data }) => { setData(data || []); setLoading(false); });
-  }, [clientId]);
-
-  const filtered = data.filter(e =>
-    e.customer_name?.toLowerCase().includes(search.toLowerCase()) ||
-    e.estimate_number?.toLowerCase().includes(search.toLowerCase())
-  );
-  const total = filtered.reduce((s, i) => s + i.total, 0);
-  const accepted = filtered.filter(e => e.status === "accepted").length;
-
-  if (loading) return <div className="text-center py-20 text-zinc-500">Loading...</div>;
-
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-        <SummaryCard label="Total Estimates" value={`${filtered.length}`} color="text-zinc-900" />
-        <SummaryCard label="Total Value" value={fmt(total)} color="text-blue-400" />
-        <SummaryCard label="Accepted" value={`${accepted}`} color="text-emerald-400" />
-      </div>
-      <input value={search} onChange={e => setSearch(e.target.value)}
-        placeholder="Search customer or estimate number..."
-        className="w-full bg-white border border-zinc-200 rounded-lg px-4 py-2 text-sm text-zinc-800 placeholder-zinc-600 focus:outline-none" />
-      <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-zinc-200 text-zinc-500 text-xs uppercase">
-                <th className="text-left px-4 py-3">Estimate #</th>
-                <th className="text-left px-4 py-3">Customer</th>
-                <th className="text-left px-4 py-3">Date</th>
-                <th className="text-left px-4 py-3">Expiry</th>
-                <th className="text-left px-4 py-3">Status</th>
-                <th className="text-right px-4 py-3">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 ? (
-                <tr><td colSpan={8} className="text-center py-10 text-zinc-500">No data yet — sync from Zoho to populate</td></tr>
-              ) : filtered.map((e, i) => (
-                <tr key={e.id} className={`border-b border-zinc-100 hover:bg-zinc-50 ${i % 2 === 0 ? "" : "bg-zinc-50"}`}>
-                  <td className="px-4 py-3 font-mono text-zinc-400 text-xs">{e.estimate_number}</td>
-                  <td className="px-4 py-3 font-medium text-zinc-900">{e.customer_name}</td>
-                  <td className="px-4 py-3 text-zinc-400">{fmtDate(e.date)}</td>
-                  <td className="px-4 py-3 text-zinc-400">{fmtDate(e.expiry_date)}</td>
-                  <td className="px-4 py-3"><Badge status={e.status} /></td>
-                  <td className="px-4 py-3 text-right font-semibold text-zinc-900">{fmt(e.total, e.currency_code)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ============================================
-// PAYMENTS TAB
-// ============================================
-function PaymentsTab({ clientId }: { clientId: string }) {
-  const [data, setData] = useState<Payment[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-
-  useEffect(() => {
-    supabase.from("payments").select("*")
-      .eq("org_id", clientId).order("date", { ascending: false })
-      .then(({ data }) => { setData(data || []); setLoading(false); });
-  }, [clientId]);
-
-  const filtered = data.filter(p =>
-    p.customer_name?.toLowerCase().includes(search.toLowerCase()) ||
-    p.payment_number?.toLowerCase().includes(search.toLowerCase())
-  );
-  const total = filtered.reduce((s, i) => s + i.amount, 0);
-
-  if (loading) return <div className="text-center py-20 text-zinc-500">Loading...</div>;
-
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3">
-        <SummaryCard label="Total Payments" value={`${filtered.length}`} color="text-zinc-900" />
-        <SummaryCard label="Total Received" value={fmt(total)} color="text-emerald-400" />
-      </div>
-      <input value={search} onChange={e => setSearch(e.target.value)}
-        placeholder="Search customer or payment number..."
-        className="w-full bg-white border border-zinc-200 rounded-lg px-4 py-2 text-sm text-zinc-800 placeholder-zinc-600 focus:outline-none" />
-      <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-zinc-200 text-zinc-500 text-xs uppercase">
-                <th className="text-left px-4 py-3">Payment #</th>
-                <th className="text-left px-4 py-3">Customer</th>
-                <th className="text-left px-4 py-3">Date</th>
-                <th className="text-left px-4 py-3">Mode</th>
-                <th className="text-right px-4 py-3">Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 ? (
-                <tr><td colSpan={5} className="text-center py-10 text-zinc-500">No data yet — sync from Zoho to populate</td></tr>
-              ) : filtered.map((p, i) => (
-                <tr key={p.id} className={`border-b border-zinc-100 hover:bg-zinc-50 ${i % 2 === 0 ? "" : "bg-zinc-50"}`}>
-                  <td className="px-4 py-3 font-mono text-zinc-400 text-xs">{p.payment_number}</td>
-                  <td className="px-4 py-3 font-medium text-zinc-900">{p.customer_name}</td>
-                  <td className="px-4 py-3 text-zinc-400">{fmtDate(p.date)}</td>
-                  <td className="px-4 py-3 text-zinc-400 capitalize">{p.payment_mode}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-emerald-400">{fmt(p.amount, p.currency_code)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ============================================
-// EXPENSES TAB
-// ============================================
-function ExpensesTab({ clientId }: { clientId: string }) {
-  const [data, setData] = useState<Expense[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-
-  useEffect(() => {
-    supabase.from("expenses").select("*")
-      .eq("org_id", clientId).order("date", { ascending: false })
-      .then(({ data }) => { setData(data || []); setLoading(false); });
-  }, [clientId]);
-
-  const filtered = data.filter(e =>
-    e.vendor_name?.toLowerCase().includes(search.toLowerCase()) ||
-    e.account_name?.toLowerCase().includes(search.toLowerCase())
-  );
-  const total = filtered.reduce((s, i) => s + i.total, 0);
-
-  if (loading) return <div className="text-center py-20 text-zinc-500">Loading...</div>;
-
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3">
-        <SummaryCard label="Total Expenses" value={`${filtered.length}`} color="text-zinc-900" />
-        <SummaryCard label="Total Amount" value={fmt(total)} color="text-red-400" />
-      </div>
-      <input value={search} onChange={e => setSearch(e.target.value)}
-        placeholder="Search vendor or account..."
-        className="w-full bg-white border border-zinc-200 rounded-lg px-4 py-2 text-sm text-zinc-800 placeholder-zinc-600 focus:outline-none" />
-      <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-zinc-200 text-zinc-500 text-xs uppercase">
-                <th className="text-left px-4 py-3">Expense #</th>
-                <th className="text-left px-4 py-3">Account</th>
-                <th className="text-left px-4 py-3">Vendor</th>
-                <th className="text-left px-4 py-3">Date</th>
-                <th className="text-left px-4 py-3">Status</th>
-                <th className="text-right px-4 py-3">Taxable</th>
-                <th className="text-right px-4 py-3">GST</th>
-                <th className="text-right px-4 py-3">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 ? (
-                <tr><td colSpan={8} className="text-center py-10 text-zinc-500">No data yet — sync from Zoho to populate</td></tr>
-              ) : filtered.map((e, i) => (
-                <tr key={e.id} className={`border-b border-zinc-100 hover:bg-zinc-50 ${i % 2 === 0 ? "" : "bg-zinc-50"}`}>
-                  <td className="px-4 py-3 font-mono text-zinc-400 text-xs">{e.expense_number?.slice(-10) || "—"}</td>
-                  <td className="px-4 py-3 text-zinc-700">{e.account_name || "—"}</td>
-                  <td className="px-4 py-3 text-zinc-700">{e.vendor_name || "—"}</td>
-                  <td className="px-4 py-3 text-zinc-400">{fmtDate(e.date)}</td>
-                  <td className="px-4 py-3"><Badge status={e.status} /></td>
-                  <td className="px-4 py-3 text-right text-zinc-700">{e.sub_total > 0 ? fmt(e.sub_total, e.currency_code || "INR") : fmt(e.total - (e.tax_total || 0), e.currency_code || "INR")}</td>
-                  <td className="px-4 py-3 text-right text-blue-600">{e.tax_total > 0 ? fmt(e.tax_total, e.currency_code || "INR") : "—"}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-red-600">{fmt(e.total, e.currency_code || "INR")}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ============================================
-// REPORTS TAB
-// ============================================
-function ReportsTab({ clientId }: { clientId: string }) {
+// ─── Accounting Module ────────────────────────────────────────────────────────
+function AccountingModule({ orgId }: { orgId: string }) {
+  const [section, setSection] = useState<AcctSection>("invoices");
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
+  const [estimates, setEstimates] = useState<Estimate[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [bills, setBills] = useState<Bill[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  const [vendorPayments, setVendorPayments] = useState<VendorPayment[]>([]);
+  const [journals, setJournals] = useState<Journal[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeReport, setActiveReport] = useState<"customers" | "expenses">("customers");
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
     Promise.all([
-      supabase.from("finance_dashboard").select("*").eq("org_id", clientId),
-      supabase.from("payments").select("*").eq("org_id", clientId),
-      supabase.from("expenses").select("*").eq("org_id", clientId),
-    ]).then(([inv, pay, exp]) => {
-      setInvoices(inv.data || []);
-      setPayments(pay.data || []);
-      setExpenses(exp.data || []);
+      supabase.from("finance_dashboard").select("*").eq("org_id", orgId).order("date", { ascending: false }),
+      supabase.from("sales_orders").select("*").eq("org_id", orgId).order("date", { ascending: false }),
+      supabase.from("estimates").select("*").eq("org_id", orgId).order("date", { ascending: false }),
+      supabase.from("payments").select("*").eq("org_id", orgId).order("date", { ascending: false }),
+      supabase.from("expenses").select("*").eq("org_id", orgId).order("date", { ascending: false }),
+      supabase.from("bills").select("*").eq("org_id", orgId).order("date", { ascending: false }),
+      supabase.from("purchase_orders").select("*").eq("org_id", orgId).order("date", { ascending: false }),
+      supabase.from("vendor_payments").select("*").eq("org_id", orgId).order("date", { ascending: false }),
+      supabase.from("journals").select("*").eq("org_id", orgId).order("journal_date", { ascending: false }),
+    ]).then(([inv, so, est, pay, exp, bil, po, vp, jrn]) => {
+      setInvoices(inv.data || []); setSalesOrders(so.data || []); setEstimates(est.data || []);
+      setPayments(pay.data || []); setExpenses(exp.data || []); setBills(bil.data || []);
+      setPurchaseOrders(po.data || []); setVendorPayments(vp.data || []); setJournals(jrn.data || []);
       setLoading(false);
     });
-  }, [clientId]);
+  }, [orgId]);
 
-  if (loading) return <div className="text-center py-20 text-zinc-500">Loading reports...</div>;
+  const SECTIONS: { key: AcctSection; label: string; count: number }[] = [
+    { key: "invoices", label: "Invoices", count: invoices.length },
+    { key: "sales_orders", label: "Sales Orders", count: salesOrders.length },
+    { key: "estimates", label: "Quotes/Estimates", count: estimates.length },
+    { key: "payments", label: "Receipts", count: payments.length },
+    { key: "expenses", label: "Expenses", count: expenses.length },
+    { key: "purchases", label: "Purchase Orders", count: purchaseOrders.length },
+    { key: "bills", label: "Bills", count: bills.length },
+    { key: "vendor_payments", label: "Vendor Payments", count: vendorPayments.length },
+    { key: "journals", label: "Journal Entries", count: journals.length },
+  ];
 
-  // ── Customer Summary ──────────────────────────────────────────────────
-  const customerMap: Record<string, {
-    name: string; gst: string | null;
-    invoiced: number; received: number; balance: number; gst_amount: number;
-    invoiceCount: number; paidCount: number;
-  }> = {};
-
-  for (const inv of invoices) {
-    const key = inv.customer_name;
-    if (!customerMap[key]) {
-      customerMap[key] = { name: inv.customer_name, gst: inv.gst_number, invoiced: 0, received: 0, balance: 0, gst_amount: 0, invoiceCount: 0, paidCount: 0 };
-    }
-    customerMap[key].invoiced += inv.total;
-    customerMap[key].balance += inv.balance;
-    customerMap[key].gst_amount += inv.tax_total;
-    customerMap[key].invoiceCount++;
-    if (inv.status === "paid") customerMap[key].paidCount++;
-  }
-
-  for (const pay of payments) {
-    const key = pay.customer_name;
-    if (customerMap[key]) customerMap[key].received += pay.amount;
-  }
-
-  const customers = Object.values(customerMap).sort((a, b) => b.invoiced - a.invoiced);
-  const totalInvoiced = customers.reduce((s, c) => s + c.invoiced, 0);
-  const totalReceived = customers.reduce((s, c) => s + c.received, 0);
-  const totalBalance = customers.reduce((s, c) => s + c.balance, 0);
-  const totalGST = customers.reduce((s, c) => s + c.gst_amount, 0);
-
-  // ── Expense Ledger ─────────────────────────────────────────────────────
-  const expenseByAccount: Record<string, { account: string; total: number; count: number; items: Expense[] }> = {};
-  for (const exp of expenses) {
-    const key = exp.account_name || "Uncategorized";
-    if (!expenseByAccount[key]) expenseByAccount[key] = { account: key, total: 0, count: 0, items: [] };
-    expenseByAccount[key].total += exp.total;
-    expenseByAccount[key].count++;
-    expenseByAccount[key].items.push(exp);
-  }
-  const expenseAccounts = Object.values(expenseByAccount).sort((a, b) => b.total - a.total);
-  const totalExpenses = expenses.reduce((s, e) => s + e.total, 0);
+  if (loading) return <div className="text-center py-20 text-zinc-400">Loading accounting data...</div>;
 
   return (
-    <div className="space-y-5">
-      {/* Report selector */}
-      <div className="flex gap-2">
-        <button
-          onClick={() => setActiveReport("customers")}
-          className={`text-sm px-5 py-2 rounded-lg border transition ${activeReport === "customers" ? "bg-zinc-100 text-zinc-900 border-zinc-100" : "bg-transparent text-zinc-400 border-zinc-200 hover:border-zinc-400"}`}>
-          Customer Report
-        </button>
-        <button
-          onClick={() => setActiveReport("expenses")}
-          className={`text-sm px-5 py-2 rounded-lg border transition ${activeReport === "expenses" ? "bg-zinc-100 text-zinc-900 border-zinc-100" : "bg-transparent text-zinc-400 border-zinc-200 hover:border-zinc-400"}`}>
-          Expense Ledger
-        </button>
+    <div className="space-y-4">
+      {/* Section nav */}
+      <div className="flex gap-1 flex-wrap border-b border-zinc-200 pb-0">
+        {SECTIONS.map(s => (
+          <button key={s.key} onClick={() => { setSection(s.key); setSearch(""); }}
+            className={`text-xs px-3 py-2 whitespace-nowrap border-b-2 -mb-px transition font-medium ${section === s.key ? "border-black text-black" : "border-transparent text-zinc-400 hover:text-zinc-700"}`}>
+            {s.label} <span className="text-zinc-300 ml-1">{s.count}</span>
+          </button>
+        ))}
       </div>
 
-      {activeReport === "customers" && (
-        <div className="space-y-4">
-          {/* Summary cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="bg-white border border-zinc-200 rounded-xl p-4">
-              <p className="text-xs text-zinc-500 mb-1">Total Invoiced</p>
-              <p className="text-xl font-semibold text-zinc-900">{fmt(totalInvoiced)}</p>
-            </div>
-            <div className="bg-white border border-zinc-200 rounded-xl p-4">
-              <p className="text-xs text-zinc-500 mb-1">Total Received</p>
-              <p className="text-xl font-semibold text-emerald-400">{fmt(totalReceived)}</p>
-            </div>
-            <div className="bg-white border border-zinc-200 rounded-xl p-4">
-              <p className="text-xs text-zinc-500 mb-1">Outstanding</p>
-              <p className="text-xl font-semibold text-amber-400">{fmt(totalBalance)}</p>
-            </div>
-            <div className="bg-white border border-zinc-200 rounded-xl p-4">
-              <p className="text-xs text-zinc-500 mb-1">Total GST</p>
-              <p className="text-xl font-semibold text-blue-400">{fmt(totalGST)}</p>
-            </div>
-          </div>
+      {/* Search */}
+      <div className="relative">
+        <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder={`Search ${section}...`}
+          className="w-full pl-9 pr-4 py-2 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-black transition" />
+      </div>
 
-          {/* Customer table */}
-          <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden">
-            <div className="px-4 py-3 border-b border-zinc-200">
-              <h3 className="text-sm font-semibold text-zinc-800">Customer-wise Breakdown</h3>
-              <p className="text-xs text-zinc-500 mt-0.5">{customers.length} customers</p>
+      {/* INVOICES */}
+      {section === "invoices" && (() => {
+        const d = invoices.filter(i => i.invoice_number?.toLowerCase().includes(search.toLowerCase()) || i.customer_name?.toLowerCase().includes(search.toLowerCase()));
+        const total = d.reduce((s, i) => s + i.total, 0); const balance = d.reduce((s, i) => s + i.balance, 0); const gst = d.reduce((s, i) => s + i.tax_total, 0);
+        return (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <Card label="Total Invoiced" value={inr(total)} />
+              <Card label="Outstanding" value={inr(balance)} color="text-amber-600" />
+              <Card label="GST Collected" value={inr(gst)} color="text-blue-600" />
+              <Card label="Paid / Total" value={`${d.filter(i => i.status === "paid").length} / ${d.length}`} color="text-emerald-600" />
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-zinc-200 text-zinc-500 text-xs uppercase">
-                    <th className="text-left px-4 py-3">Customer</th>
-                    <th className="text-left px-4 py-3">GST No.</th>
-                    <th className="text-right px-4 py-3">Invoices</th>
-                    <th className="text-right px-4 py-3">Invoiced</th>
-                    <th className="text-right px-4 py-3">Received</th>
-                    <th className="text-right px-4 py-3">Outstanding</th>
-                    <th className="text-right px-4 py-3">GST</th>
-                    <th className="text-right px-4 py-3">Collection %</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {customers.map((c, i) => {
-                    const pct = c.invoiced > 0 ? Math.round((c.received / c.invoiced) * 100) : 0;
-                    return (
-                      <tr key={i} className="border-b border-zinc-100 hover:bg-zinc-50">
-                        <td className="px-4 py-3 font-medium text-zinc-900">{c.name}</td>
-                        <td className="px-4 py-3 text-zinc-500 font-mono text-xs">{c.gst || "—"}</td>
-                        <td className="px-4 py-3 text-right text-zinc-400">{c.invoiceCount} <span className="text-zinc-600 text-xs">({c.paidCount} paid)</span></td>
-                        <td className="px-4 py-3 text-right font-semibold text-zinc-900">{fmt(c.invoiced)}</td>
-                        <td className="px-4 py-3 text-right text-emerald-400">{fmt(c.received)}</td>
-                        <td className="px-4 py-3 text-right text-amber-400">{fmt(c.balance)}</td>
-                        <td className="px-4 py-3 text-right text-blue-400">{fmt(c.gst_amount)}</td>
-                        <td className="px-4 py-3 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <div className="w-16 bg-zinc-100 rounded-full h-1.5">
-                              <div className="bg-emerald-400 h-1.5 rounded-full" style={{ width: `${Math.min(pct, 100)}%` }} />
-                            </div>
-                            <span className={`text-xs font-medium ${pct >= 100 ? "text-emerald-400" : pct >= 50 ? "text-amber-400" : "text-red-400"}`}>{pct}%</span>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr className="border-t border-zinc-300 bg-zinc-100/50">
-                    <td className="px-4 py-3 font-semibold text-zinc-700" colSpan={3}>Total</td>
-                    <td className="px-4 py-3 text-right font-bold text-zinc-900">{fmt(totalInvoiced)}</td>
-                    <td className="px-4 py-3 text-right font-bold text-emerald-400">{fmt(totalReceived)}</td>
-                    <td className="px-4 py-3 text-right font-bold text-amber-400">{fmt(totalBalance)}</td>
-                    <td className="px-4 py-3 text-right font-bold text-blue-400">{fmt(totalGST)}</td>
-                    <td />
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
+            <Table cols={["Invoice #", "Customer", "Date", "Due", "Status", "Subtotal", "GST", "Total", "Balance"]}
+              rows={d.map(i => [
+                <span className="font-mono text-xs text-zinc-500">{i.invoice_number}{i.total >= 500000 && !i.reference_number ? <span className="ml-1 text-red-500 text-[10px]">⚠IRN</span> : null}</span>,
+                <span>{i.customer_name}{i.gst_number ? <span className="block text-xs text-zinc-400">{i.gst_number}</span> : null}</span>,
+                fdate(i.date), fdate(i.due_date), <Badge s={i.status} />,
+                <span>{i.sub_total > 0 ? fmt(i.sub_total, i.currency_code) : "—"}</span>,
+                <span className="text-blue-600">{i.tax_total > 0 ? fmt(i.tax_total, i.currency_code) : "—"}</span>,
+                <span className="font-semibold">{fmt(i.total, i.currency_code)}</span>,
+                <span className={i.balance > 0 ? "font-semibold text-amber-600" : "text-emerald-600"}>{i.balance > 0 ? fmt(i.balance, i.currency_code) : "Paid"}</span>,
+              ])} empty="No invoices — sync from Zoho" />
           </div>
-        </div>
-      )}
+        );
+      })()}
 
-      {activeReport === "expenses" && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            <div className="bg-white border border-zinc-200 rounded-xl p-4">
-              <p className="text-xs text-zinc-500 mb-1">Total Expenses</p>
-              <p className="text-xl font-semibold text-red-400">{fmt(totalExpenses)}</p>
+      {/* SALES ORDERS */}
+      {section === "sales_orders" && (() => {
+        const d = salesOrders.filter(s => s.salesorder_number?.toLowerCase().includes(search.toLowerCase()) || s.customer_name?.toLowerCase().includes(search.toLowerCase()));
+        return (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              <Card label="Total Orders" value={String(d.length)} />
+              <Card label="Total Value" value={inr(d.reduce((s, i) => s + i.total, 0))} />
+              <Card label="Confirmed" value={String(d.filter(s => s.status === "confirmed").length)} color="text-emerald-600" />
             </div>
-            <div className="bg-white border border-zinc-200 rounded-xl p-4">
-              <p className="text-xs text-zinc-500 mb-1">No. of Entries</p>
-              <p className="text-xl font-semibold text-zinc-900">{expenses.length}</p>
-            </div>
-            <div className="bg-white border border-zinc-200 rounded-xl p-4">
-              <p className="text-xs text-zinc-500 mb-1">Ledger Accounts</p>
-              <p className="text-xl font-semibold text-purple-400">{expenseAccounts.length}</p>
-            </div>
+            <Table cols={["SO #", "Customer", "Date", "Shipment", "Status", "Billed", "Total"]}
+              rows={d.map(s => [
+                <span className="font-mono text-xs text-zinc-500">{s.salesorder_number}</span>,
+                s.customer_name, fdate(s.date), fdate(s.shipment_date), <Badge s={s.status} />,
+                <Badge s={s.billed_status || "none"} />,
+                <span className="font-semibold">{fmt(s.total, s.currency_code)}</span>,
+              ])} empty="No sales orders" />
           </div>
+        );
+      })()}
 
-          {/* Ledger breakdown */}
-          <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden">
-            <div className="px-4 py-3 border-b border-zinc-200">
-              <h3 className="text-sm font-semibold text-zinc-800">Expense Ledger</h3>
-              <p className="text-xs text-zinc-500 mt-0.5">Grouped by account</p>
+      {/* ESTIMATES */}
+      {section === "estimates" && (() => {
+        const d = estimates.filter(e => e.estimate_number?.toLowerCase().includes(search.toLowerCase()) || e.customer_name?.toLowerCase().includes(search.toLowerCase()));
+        return (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              <Card label="Total Quotes" value={String(d.length)} />
+              <Card label="Total Value" value={inr(d.reduce((s, i) => s + i.total, 0))} />
+              <Card label="Accepted" value={String(d.filter(e => e.status === "accepted").length)} color="text-emerald-600" />
             </div>
-            {expenseAccounts.map((grp, gi) => (
-              <div key={gi} className="border-b border-zinc-100 last:border-0">
-                <div className="flex items-center justify-between px-4 py-3 bg-zinc-50">
-                  <div className="flex items-center gap-3">
-                    <span className="text-sm font-semibold text-zinc-900">{grp.account}</span>
-                    <span className="text-xs text-zinc-500">{grp.count} entries</span>
-                  </div>
-                  <span className="text-sm font-bold text-red-400">{fmt(grp.total)}</span>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-zinc-600 text-xs uppercase border-b border-zinc-100">
-                        <th className="text-left px-6 py-2">Expense #</th>
-                        <th className="text-left px-4 py-2">Vendor</th>
-                        <th className="text-left px-4 py-2">Date</th>
-                        <th className="text-left px-4 py-2">Status</th>
-                        <th className="text-left px-4 py-2">Description</th>
-                        <th className="text-right px-4 py-2">Amount</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {grp.items.map((exp, ei) => (
-                        <tr key={ei} className="border-b border-zinc-200/30 hover:bg-zinc-50 last:border-0">
-                          <td className="px-6 py-2 font-mono text-zinc-500 text-xs">{exp.expense_number}</td>
-                          <td className="px-4 py-2 text-zinc-700">{exp.vendor_name || "—"}</td>
-                          <td className="px-4 py-2 text-zinc-500">{fmtDate(exp.date)}</td>
-                          <td className="px-4 py-2">
-                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${STATUS_COLORS[exp.status] || "bg-zinc-100 text-zinc-400"}`}>{exp.status}</span>
-                          </td>
-                          <td className="px-4 py-2 text-zinc-500 text-xs max-w-[200px] truncate">{exp.description || "—"}</td>
-                          <td className="px-4 py-2 text-right font-semibold text-red-400">{fmt(exp.total, exp.currency_code)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ))}
-            {expenseAccounts.length === 0 && (
-              <div className="text-center py-10 text-zinc-500">No expenses found</div>
-            )}
-            {expenseAccounts.length > 0 && (
-              <div className="flex items-center justify-between px-4 py-3 bg-zinc-100/50 border-t border-zinc-300">
-                <span className="text-sm font-semibold text-zinc-700">Grand Total</span>
-                <span className="text-sm font-bold text-red-400">{fmt(totalExpenses)}</span>
-              </div>
-            )}
+            <Table cols={["Estimate #", "Customer", "Date", "Expiry", "Status", "Total"]}
+              rows={d.map(e => [
+                <span className="font-mono text-xs text-zinc-500">{e.estimate_number}</span>,
+                e.customer_name, fdate(e.date), fdate(e.expiry_date), <Badge s={e.status} />,
+                <span className="font-semibold">{fmt(e.total, e.currency_code)}</span>,
+              ])} empty="No estimates" />
           </div>
-        </div>
-      )}
+        );
+      })()}
+
+      {/* PAYMENTS / RECEIPTS */}
+      {section === "payments" && (() => {
+        const d = payments.filter(p => p.payment_number?.toLowerCase().includes(search.toLowerCase()) || p.customer_name?.toLowerCase().includes(search.toLowerCase()));
+        return (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              <Card label="Total Receipts" value={String(d.length)} />
+              <Card label="Total Received" value={inr(d.reduce((s, i) => s + i.amount, 0))} color="text-emerald-600" />
+              <Card label="Avg per Receipt" value={inr(d.length > 0 ? d.reduce((s, i) => s + i.amount, 0) / d.length : 0)} />
+            </div>
+            <Table cols={["Receipt #", "Customer", "Date", "Mode", "Reference", "Amount"]}
+              rows={d.map(p => [
+                <span className="font-mono text-xs text-zinc-500">{p.payment_number}</span>,
+                p.customer_name, fdate(p.date),
+                <span className="text-xs bg-zinc-100 px-2 py-0.5 rounded">{p.payment_mode || "—"}</span>,
+                <span className="text-xs text-zinc-400">{p.reference_number || "—"}</span>,
+                <span className="font-semibold text-emerald-600">{fmt(p.amount, p.currency_code)}</span>,
+              ])} empty="No payments received" />
+          </div>
+        );
+      })()}
+
+      {/* EXPENSES */}
+      {section === "expenses" && (() => {
+        const d = expenses.filter(e => (e.vendor_name || "").toLowerCase().includes(search.toLowerCase()) || (e.account_name || "").toLowerCase().includes(search.toLowerCase()));
+        const total = d.reduce((s, e) => s + e.total, 0); const gst = d.reduce((s, e) => s + (e.tax_total || 0), 0);
+        return (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              <Card label="Total Expenses" value={String(d.length)} />
+              <Card label="GST Paid" value={inr(gst)} color="text-blue-600" />
+              <Card label="Total Amount" value={inr(total)} color="text-red-600" />
+            </div>
+            <Table cols={["Ref", "Account", "Vendor", "Date", "Status", "Taxable", "GST", "Total"]}
+              rows={d.map(e => [
+                <span className="font-mono text-xs text-zinc-500">{e.expense_number?.slice(-10) || "—"}</span>,
+                <span className="text-xs">{e.account_name || "—"}</span>,
+                <span>{e.vendor_name || "—"}</span>, fdate(e.date), <Badge s={e.status} />,
+                <span>{e.sub_total > 0 ? fmt(e.sub_total, e.currency_code || "INR") : fmt(e.total - (e.tax_total || 0), e.currency_code || "INR")}</span>,
+                <span className="text-blue-600">{e.tax_total > 0 ? fmt(e.tax_total, e.currency_code || "INR") : "—"}</span>,
+                <span className="font-semibold text-red-600">{fmt(e.total, e.currency_code || "INR")}</span>,
+              ])} empty="No expenses — sync from Zoho" />
+          </div>
+        );
+      })()}
+
+      {/* PURCHASE ORDERS */}
+      {section === "purchases" && (() => {
+        const d = purchaseOrders.filter(p => p.purchaseorder_number?.toLowerCase().includes(search.toLowerCase()) || p.vendor_name?.toLowerCase().includes(search.toLowerCase()));
+        return (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              <Card label="Total POs" value={String(d.length)} />
+              <Card label="Total Value" value={inr(d.reduce((s, i) => s + i.total, 0))} />
+              <Card label="Unbilled" value={String(d.filter(p => p.billed_status === "none" || !p.billed_status).length)} color="text-amber-600" />
+            </div>
+            <Table cols={["PO #", "Vendor", "Date", "Status", "Billed", "GRN Status", "Total"]}
+              rows={d.map(p => [
+                <span className="font-mono text-xs text-zinc-500">{p.purchaseorder_number}</span>,
+                p.vendor_name, fdate(p.date), <Badge s={p.status} />,
+                <Badge s={p.billed_status || "none"} />,
+                <Badge s={p.received_status || "none"} />,
+                <span className="font-semibold">{fmt(p.total, p.currency_code)}</span>,
+              ])} empty="No purchase orders — sync from Zoho" />
+          </div>
+        );
+      })()}
+
+      {/* BILLS */}
+      {section === "bills" && (() => {
+        const d = bills.filter(b => b.bill_number?.toLowerCase().includes(search.toLowerCase()) || b.vendor_name?.toLowerCase().includes(search.toLowerCase()));
+        return (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              <Card label="Total Bills" value={String(d.length)} />
+              <Card label="Outstanding" value={inr(d.reduce((s, i) => s + i.balance, 0))} color="text-amber-600" />
+              <Card label="Total Value" value={inr(d.reduce((s, i) => s + i.total, 0))} />
+            </div>
+            <Table cols={["Bill #", "Vendor", "Date", "Due", "Status", "Total", "Balance"]}
+              rows={d.map(b => [
+                <span className="font-mono text-xs text-zinc-500">{b.bill_number}</span>,
+                b.vendor_name, fdate(b.date), fdate(b.due_date), <Badge s={b.status} />,
+                <span className="font-semibold">{fmt(b.total, b.currency_code)}</span>,
+                <span className={b.balance > 0 ? "font-semibold text-amber-600" : "text-emerald-600"}>{b.balance > 0 ? fmt(b.balance, b.currency_code) : "Paid"}</span>,
+              ])} empty="No bills — sync from Zoho" />
+          </div>
+        );
+      })()}
+
+      {/* VENDOR PAYMENTS */}
+      {section === "vendor_payments" && (() => {
+        const d = vendorPayments.filter(p => (p.vendor_name || "").toLowerCase().includes(search.toLowerCase()));
+        return (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <Card label="Total Payments Made" value={String(d.length)} />
+              <Card label="Total Amount Paid" value={inr(d.reduce((s, i) => s + i.amount, 0))} color="text-red-600" />
+            </div>
+            <Table cols={["Ref", "Vendor", "Date", "Mode", "Amount"]}
+              rows={d.map(p => [
+                <span className="font-mono text-xs text-zinc-500">{p.payment_number || "—"}</span>,
+                p.vendor_name, fdate(p.date),
+                <span className="text-xs bg-zinc-100 px-2 py-0.5 rounded">{p.payment_mode || "—"}</span>,
+                <span className="font-semibold text-red-600">{fmt(p.amount, p.currency_code)}</span>,
+              ])} empty="No vendor payments — sync from Zoho" />
+          </div>
+        );
+      })()}
+
+      {/* JOURNALS */}
+      {section === "journals" && (() => {
+        const d = journals.filter(j => (j.entry_number || "").toLowerCase().includes(search.toLowerCase()) || (j.notes || "").toLowerCase().includes(search.toLowerCase()));
+        return (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <Card label="Journal Entries" value={String(d.length)} />
+              <Card label="Total Value" value={inr(d.reduce((s, j) => s + j.total, 0))} />
+            </div>
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700">
+              ⚠ Journal entries bypass automated TDS/GST checks. Each entry below is flagged for manual review in the Internal Audit module.
+            </div>
+            <Table cols={["Entry #", "Date", "Notes", "Total"]}
+              rows={d.map(j => [
+                <span className="font-mono text-xs text-zinc-500">{j.entry_number || j.id.slice(-8)}</span>,
+                fdate(j.journal_date),
+                <span className="text-xs text-zinc-500 max-w-xs truncate">{j.notes || "—"}</span>,
+                <span className="font-semibold">{inr(j.total)}</span>,
+              ])} empty="No journal entries — sync from Zoho" />
+          </div>
+        );
+      })()}
     </div>
   );
 }
 
-
-// ============================================
-// COMPLIANCE ENGINE + AUDIT TAB
-// ============================================
-
-const TDS_RULES: { sec: string; label: string; keywords: string[]; threshold: number; rate: number; note?: string }[] = [
-  { sec: "192", label: "192 – Salary", keywords: ["salary","salaries","wages","payroll","staff cost","employee cost"], threshold: 250000, rate: 10 },
-  { sec: "194A", label: "194A – Interest", keywords: ["interest paid","loan interest","interest charges","fd interest","interest expense","finance charges","bank charges"], threshold: 5000, rate: 10 },
-  { sec: "194C", label: "194C – Contractors", keywords: ["contractor","sub-contractor","construction","civil work","transport","courier","logistics","freight","cargo","packers","movers","security","catering","caterer","printing","cleaning","housekeeping","labour","manpower","staffing","event","fabrication","erection","installation"], threshold: 30000, rate: 2, note: "2% for company/firm, 1% for individual/HUF" },
-  { sec: "194H", label: "194H – Commission/Brokerage", keywords: ["commission","brokerage","referral fee","agent fee","dealer commission","channel partner","distributor commission","sales commission"], threshold: 15000, rate: 5 },
-  { sec: "194I", label: "194I – Rent", keywords: ["rent","lease","rental","property management","office space","premises","godown rent","warehouse rent","equipment rent","machinery rent"], threshold: 50000, rate: 10 },
-  { sec: "194J", label: "194J – Professional/Technical", keywords: ["consultant","consulting","professional","technical","legal","advocate","chartered","architect","software","it services","technology","agency","designer","freelancer","cloud","subscription","saas","advisory","audit fees","accounting","medical","doctor"], threshold: 30000, rate: 10 },
-  { sec: "194M", label: "194M – Contracts >₹50L (Individual)", keywords: ["professional fees","contractor payment","commission payment"], threshold: 5000000, rate: 5 },
-  { sec: "194O", label: "194O – E-Commerce", keywords: ["ecommerce","e-commerce","amazon","flipkart","platform fee","marketplace fee","aggregator"], threshold: 500000, rate: 1 },
-  { sec: "194Q", label: "194Q – Goods Purchase >₹50L", keywords: ["purchase","goods purchase","raw material","inventory purchase","material purchase"], threshold: 5000000, rate: 0.1 },
-  { sec: "195", label: "195 – NRI/Foreign Payments", keywords: ["foreign payment","overseas payment","non-resident","nri payment","remittance","foreign vendor","offshore"], threshold: 1, rate: 20 },
-];
-
-const BLOCKED_ITC = ["food","canteen","catering","caterer","staff welfare","restaurant","meal","lunch","dinner","club membership","gym","health club","personal","motor vehicle","car hire","cab","taxi"];
-const RCM_SERVICES = [
-  { label: "Legal services from advocate", keywords: ["advocate","lawyer","legal counsel","legal retainer","litigation"] },
-  { label: "GTA – Goods Transport Agency", keywords: ["gta","goods transport","road transport","truck","lorry"] },
-  { label: "Sponsorship services", keywords: ["sponsorship","sponsored","event sponsor"] },
-  { label: "Director fees to company", keywords: ["director fee","sitting fee","director remuneration"] },
-  { label: "Security services", keywords: ["security service","security guard","security agency"] },
-];
-
-function inferTdsRule(vendor: string, account: string, amount: number) {
-  const t = `${vendor} ${account}`.toLowerCase();
-  const skip = ["192","194Q","195"];
-  for (const r of TDS_RULES) {
-    if (skip.includes(r.sec)) continue;
-    if (r.keywords.some(k => t.includes(k)) && amount >= r.threshold) return r;
-  }
-  return null;
-}
-function isItcBlocked(account: string, vendor: string) {
-  return BLOCKED_ITC.some(k => `${account} ${vendor}`.toLowerCase().includes(k));
-}
-function inferRcm(vendor: string, account: string) {
-  const t = `${vendor} ${account}`.toLowerCase();
-  for (const r of RCM_SERVICES) { if (r.keywords.some(k => t.includes(k))) return r; }
-  return null;
-}
-function tdsDueDate(expDate: string): string {
-  const d = new Date(expDate);
-  if (d.getMonth() === 2) return `30 Apr ${d.getFullYear()}`;
-  return new Date(d.getFullYear(), d.getMonth() + 1, 7).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
-}
-
-type AuditFinding = {
-  id: string; severity: "Critical" | "Warning" | "Info";
-  category: "TDS" | "GST/ITC" | "RCM" | "Invoice" | "Collections" | "Matching" | "MSME" | "Payable Ageing" | "Data Quality";
-  ref: string; date: string; party: string; account: string;
-  amount: number; issue: string; detail: string; action: string;
-};
-
-function buildFindings(invoices: Invoice[], salesOrders: SalesOrder[], payments: Payment[], expenses: Expense[]): AuditFinding[] {
-  const findings: AuditFinding[] = [];
-  const today = new Date();
-
-  for (const inv of invoices) {
-    if (inv.balance > 0 && inv.due_date) {
-      const days = Math.floor((today.getTime() - new Date(inv.due_date).getTime()) / 86400000);
-      if (days > 0) {
-        findings.push({ id: `OD-${inv.id}`, severity: days > 90 ? "Critical" : days > 30 ? "Warning" : "Info", category: "Collections", ref: inv.invoice_number, date: inv.date, party: inv.customer_name, account: "Trade Receivables", amount: inv.balance, issue: `Overdue ${days}d — ₹${inv.balance.toLocaleString("en-IN")} unpaid`, detail: `Invoice ${inv.invoice_number} due ${inv.due_date}. Balance ₹${inv.balance.toLocaleString("en-IN")} of ₹${inv.total.toLocaleString("en-IN")}.`, action: days > 90 ? "Issue legal notice. Evaluate bad debt provision." : days > 30 ? "Send formal payment reminder with interest clause." : "Follow up — past due date." });
-      }
-    }
-    if (!inv.gst_number && inv.tax_total > 0) {
-      findings.push({ id: `GSTIN-${inv.id}`, severity: "Warning", category: "Invoice", ref: inv.invoice_number, date: inv.date, party: inv.customer_name, account: "Sales Invoice", amount: inv.total, issue: "B2B invoice missing customer GSTIN", detail: `Invoice ${inv.invoice_number} — GST ₹${inv.tax_total.toLocaleString("en-IN")} charged but no GSTIN. Cannot populate GSTR-1 B2B table.`, action: "Collect customer GSTIN and update. Report correctly in GSTR-1." });
-    }
-    if (inv.total >= 500000 && !inv.reference_number) {
-      findings.push({ id: `IRN-${inv.id}`, severity: "Critical", category: "Invoice", ref: inv.invoice_number, date: inv.date, party: inv.customer_name, account: "Sales Invoice", amount: inv.total, issue: `e-Invoice/IRN missing — ₹${(inv.total/100000).toFixed(1)}L invoice`, detail: `Invoice ${inv.invoice_number} ₹${inv.total.toLocaleString("en-IN")} has no IRN. Mandatory threshold breach.`, action: "Generate IRN via IRP portal. Buyer cannot claim ITC without IRN." });
-    }
-  }
-
-  const invByCust: Record<string, Invoice[]> = {};
-  const payByCust: Record<string, Payment[]> = {};
-  for (const i of invoices) { const k = i.customer_name?.toLowerCase().trim() || ""; (invByCust[k] = invByCust[k] || []).push(i); }
-  for (const p of payments) { const k = p.customer_name?.toLowerCase().trim() || ""; (payByCust[k] = payByCust[k] || []).push(p); }
-
-  const soSeen = new Set<string>();
-  for (const so of salesOrders) {
-    const k = so.customer_name?.toLowerCase().trim() || "";
-    if (soSeen.has(k)) continue; soSeen.add(k);
-    const totalPaid = (payByCust[k] || []).reduce((s, p) => s + p.amount, 0);
-    const totalInvoiced = (invByCust[k] || []).reduce((s, i) => s + i.total, 0);
-    if (totalPaid > 0 && (invByCust[k] || []).length === 0) {
-      findings.push({ id: `2WAY-${so.id}`, severity: "Critical", category: "Matching", ref: so.salesorder_number, date: so.date, party: so.customer_name, account: "Advance from Customer", amount: totalPaid, issue: `₹${totalPaid.toLocaleString("en-IN")} received — NO invoice raised`, detail: `SO ${so.salesorder_number} ₹${so.total.toLocaleString("en-IN")}. Payment received but no invoice. GST output liability triggered from receipt date.`, action: "Raise invoice immediately. Pay GST on advance. Risk: interest @18% p.a." });
-    } else if (totalPaid > 0 && totalInvoiced > 0 && totalInvoiced < totalPaid * 0.9) {
-      findings.push({ id: `3WAY-${so.id}`, severity: "Warning", category: "Matching", ref: so.salesorder_number, date: so.date, party: so.customer_name, account: "Advance from Customer", amount: totalPaid - totalInvoiced, issue: `₹${(totalPaid - totalInvoiced).toLocaleString("en-IN")} received but not invoiced`, detail: `Paid ₹${totalPaid.toLocaleString("en-IN")}, invoiced ₹${totalInvoiced.toLocaleString("en-IN")}. Gap ₹${(totalPaid - totalInvoiced).toLocaleString("en-IN")}.`, action: `Raise balance invoice ₹${(totalPaid - totalInvoiced).toLocaleString("en-IN")}. Clear advance entry.` });
-    }
-  }
-
-  for (const exp of expenses) {
-    const vendor = exp.vendor_name || "";
-    const account = exp.account_name || "";
-    const rule = inferTdsRule(vendor, account, exp.total);
-    if (rule) {
-      const expectedTds = Math.round(exp.total * rule.rate / 100);
-      findings.push({ id: `TDS-${exp.id}`, severity: "Critical", category: "TDS", ref: exp.expense_number || exp.id, date: exp.date, party: vendor || "Unknown", account: account || "—", amount: exp.total, issue: `TDS not deducted — ${rule.label} @${rule.rate}%`, detail: `Expense ₹${exp.total.toLocaleString("en-IN")} to "${vendor}". Expected TDS ₹${expectedTds.toLocaleString("en-IN")}. Deposit due ${tdsDueDate(exp.date)}.`, action: `Deduct TDS ₹${expectedTds.toLocaleString("en-IN")} u/s ${rule.sec}. Deposit via ITNS 281 by ${tdsDueDate(exp.date)}. File Form 26Q.` });
-    }
-    const rcm = inferRcm(vendor, account);
-    if (rcm && exp.total > 5000) {
-      findings.push({ id: `RCM-${exp.id}`, severity: "Warning", category: "RCM", ref: exp.expense_number || exp.id, date: exp.date, party: vendor || "—", account: account || "—", amount: exp.total, issue: `RCM applicable — ${rcm.label}`, detail: `GST @18% = ₹${Math.round(exp.total * 0.18).toLocaleString("en-IN")} payable under Reverse Charge.`, action: "Pay GST under RCM via cash ledger. Report in GSTR-3B Table 3.1(d)." });
-    }
-    if (isItcBlocked(account, vendor) && exp.total > 1000) {
-      findings.push({ id: `ITC-${exp.id}`, severity: "Warning", category: "GST/ITC", ref: exp.expense_number || exp.id, date: exp.date, party: vendor || "—", account: account || "—", amount: exp.total, issue: `ITC blocked u/s 17(5) — ${account}`, detail: `"${account}" is a blocked credit category. GST paid cannot be offset.`, action: "Do not claim ITC in GSTR-3B. Reverse if already claimed — interest @24% p.a." });
-    }
-    if (!vendor && exp.total >= 10000) {
-      findings.push({ id: `NOVND-${exp.id}`, severity: "Info", category: "Data Quality", ref: exp.expense_number || exp.id, date: exp.date, party: "Unknown", account: account || "—", amount: exp.total, issue: `No vendor — ₹${exp.total.toLocaleString("en-IN")} under "${account}" — unassessable`, detail: `No vendor name. TDS/GST section cannot be inferred.`, action: "Update vendor. If journal used to skip vendor, investigate — likely compliance bypass." });
-    }
-  }
-  return findings;
-}
-
-type Customer360 = { name: string; gstNumber: string; invoiceCount: number; invoiced: number; received: number; outstanding: number; soCount: number; soTotal: number; invoices: Invoice[]; payments: Payment[]; sos: SalesOrder[] };
-function buildCustomer360(invoices: Invoice[], payments: Payment[], salesOrders: SalesOrder[]): Customer360[] {
-  const map: Record<string, Customer360> = {};
-  for (const inv of invoices) {
-    const k = inv.customer_name;
-    if (!map[k]) map[k] = { name: k, gstNumber: inv.gst_number || "", invoiceCount: 0, invoiced: 0, received: 0, outstanding: 0, soCount: 0, soTotal: 0, invoices: [], payments: [], sos: [] };
-    map[k].invoiced += inv.total; map[k].outstanding += inv.balance; map[k].invoiceCount++;
-    if (!map[k].gstNumber && inv.gst_number) map[k].gstNumber = inv.gst_number;
-    map[k].invoices.push(inv);
-  }
-  for (const p of payments) {
-    const k = p.customer_name;
-    if (!map[k]) map[k] = { name: k, gstNumber: "", invoiceCount: 0, invoiced: 0, received: 0, outstanding: 0, soCount: 0, soTotal: 0, invoices: [], payments: [], sos: [] };
-    map[k].received += p.amount; map[k].payments.push(p);
-  }
-  for (const so of salesOrders) {
-    const k = so.customer_name;
-    if (!map[k]) map[k] = { name: k, gstNumber: "", invoiceCount: 0, invoiced: 0, received: 0, outstanding: 0, soCount: 0, soTotal: 0, invoices: [], payments: [], sos: [] };
-    map[k].soCount++; map[k].soTotal += so.total; map[k].sos.push(so);
-  }
-  return Object.values(map).sort((a, b) => b.invoiced - a.invoiced);
-}
-
-const SEVSTYLE: Record<string, { border: string; badge: string; bg: string; text: string }> = {
-  Critical: { border: "border-red-300", badge: "bg-red-500 text-white", bg: "bg-red-50", text: "text-red-600" },
-  Warning:  { border: "border-amber-300", badge: "bg-amber-400 text-black", bg: "bg-amber-50", text: "text-amber-700" },
-  Info:     { border: "border-sky-300", badge: "bg-sky-500 text-white", bg: "bg-sky-50", text: "text-sky-700" },
-};
-
-function AuditTab({ clientId }: { clientId: string }) {
+// ─── Internal Audit Module ────────────────────────────────────────────────────
+function AuditModule({ orgId }: { orgId: string }) {
+  const [section, setSection] = useState<AuditSection>("overview");
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [bills, setBills] = useState<Bill[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  const [vendorPayments, setVendorPayments] = useState<VendorPayment[]>([]);
+  const [journals, setJournals] = useState<Journal[]>([]);
   const [loading, setLoading] = useState(true);
-  const [section, setSection] = useState<"overview" | "customers" | "matching" | "compliance" | "expenses" | "payables">("overview");
-  const [expandedFinding, setExpandedFinding] = useState<string | null>(null);
-  const [expandedCustomer, setExpandedCustomer] = useState<string | null>(null);
-  const [filterSev, setFilterSev] = useState("All");
-  const [filterCat, setFilterCat] = useState("All");
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [monthFilter, setMonthFilter] = useState("");
 
   useEffect(() => {
     Promise.all([
-      supabase.from("finance_dashboard").select("*").eq("org_id", clientId),
-      supabase.from("sales_orders").select("*").eq("org_id", clientId),
-      supabase.from("payments").select("*").eq("org_id", clientId),
-      supabase.from("expenses").select("*").eq("org_id", clientId),
-    ]).then(([inv, so, pay, exp]) => {
+      supabase.from("finance_dashboard").select("*").eq("org_id", orgId),
+      supabase.from("sales_orders").select("*").eq("org_id", orgId),
+      supabase.from("payments").select("*").eq("org_id", orgId),
+      supabase.from("expenses").select("*").eq("org_id", orgId),
+      supabase.from("bills").select("*").eq("org_id", orgId),
+      supabase.from("purchase_orders").select("*").eq("org_id", orgId),
+      supabase.from("vendor_payments").select("*").eq("org_id", orgId),
+      supabase.from("journals").select("*").eq("org_id", orgId),
+    ]).then(([inv, so, pay, exp, bil, po, vp, jrn]) => {
       setInvoices(inv.data || []); setSalesOrders(so.data || []);
       setPayments(pay.data || []); setExpenses(exp.data || []);
+      setBills(bil.data || []); setPurchaseOrders(po.data || []);
+      setVendorPayments(vp.data || []); setJournals(jrn.data || []);
       setLoading(false);
     });
-  }, [clientId]);
+  }, [orgId]);
 
-  const findings = buildFindings(invoices, salesOrders, payments, expenses);
-  const customers = buildCustomer360(invoices, payments, salesOrders);
-  const counts = { Critical: findings.filter(f => f.severity === "Critical").length, Warning: findings.filter(f => f.severity === "Warning").length, Info: findings.filter(f => f.severity === "Info").length };
-  const tdsExposure = findings.filter(f => f.category === "TDS").reduce((s, f) => { const r = inferTdsRule(f.party, f.account, f.amount); return s + (r ? Math.round(f.amount * r.rate / 100) : 0); }, 0);
-  const overdueTotal = findings.filter(f => f.category === "Collections").reduce((s, f) => s + f.amount, 0);
-  const unmatchedAdv = findings.filter(f => f.id.startsWith("2WAY")).reduce((s, f) => s + f.amount, 0);
+  // ── Findings engine ──
+  type Finding = { id: string; sev: "Critical" | "Warning" | "Info"; cat: string; party: string; ref: string; date: string; amount: number; issue: string; detail: string; action: string };
+  const findings: Finding[] = [];
+  const today = new Date();
 
-  const SECTIONS = [
-    { key: "overview", label: "Overview" }, { key: "customers", label: "Customer 360" },
-    { key: "matching", label: "SO · Pay · Invoice" }, { key: "compliance", label: "Statutory Compliance" },
-    { key: "expenses", label: "Expense / TDS / GST" }, { key: "payables", label: "Payables · Ageing" },
-  ] as const;
+  // Overdue invoices
+  for (const inv of invoices) {
+    if (inv.balance > 0 && inv.due_date) {
+      const days = daysDiff(inv.due_date);
+      if (days > 0) findings.push({ id: `OD-${inv.id}`, sev: days > 90 ? "Critical" : days > 30 ? "Warning" : "Info", cat: "Collections", party: inv.customer_name, ref: inv.invoice_number, date: inv.date, amount: inv.balance, issue: `Overdue ${days}d — ₹${inv.balance.toLocaleString("en-IN")} unpaid`, detail: `Invoice ${inv.invoice_number} was due on ${inv.due_date}. Balance ₹${inv.balance.toLocaleString("en-IN")} of total ₹${inv.total.toLocaleString("en-IN")}.`, action: days > 90 ? "Issue legal notice. Consider bad debt provision u/s 36(1)(vii)." : days > 30 ? "Send formal demand letter with interest clause." : "Follow up for payment." });
+    }
+  }
 
-  const sectionFindings = findings.filter(f =>
-    section === "matching" ? ["Matching"].includes(f.category) :
-    section === "compliance" ? ["TDS","GST/ITC","RCM","Invoice"].includes(f.category) :
-    section === "expenses" ? ["TDS","GST/ITC","RCM","Data Quality"].includes(f.category) :
-    section === "payables" ? ["MSME","Payable Ageing","Collections"].includes(f.category) :
-    true
-  ).filter(f => (filterSev === "All" || f.severity === filterSev) && (filterCat === "All" || f.category === filterCat));
+  // Missing GSTIN on B2B invoices
+  for (const inv of invoices) {
+    if (!inv.gst_number && inv.tax_total > 0) findings.push({ id: `GSTIN-${inv.id}`, sev: "Warning", cat: "GST", party: inv.customer_name, ref: inv.invoice_number, date: inv.date, amount: inv.total, issue: "B2B invoice — customer GSTIN missing", detail: `Invoice ${inv.invoice_number}: GST ₹${inv.tax_total.toLocaleString("en-IN")} charged but no GSTIN. GSTR-1 B2B table incomplete.`, action: "Collect GSTIN and update. Buyer loses ITC without GSTIN on invoice." });
+  }
 
-  const cats = ["All", ...Array.from(new Set(findings.map(f => f.category)))];
+  // e-Invoice / IRN missing
+  for (const inv of invoices) {
+    if (inv.total >= 500000 && !inv.reference_number) findings.push({ id: `IRN-${inv.id}`, sev: "Critical", cat: "GST", party: inv.customer_name, ref: inv.invoice_number, date: inv.date, amount: inv.total, issue: `e-Invoice/IRN missing — ₹${(inv.total / 100000).toFixed(1)}L invoice`, detail: `Invoice ${inv.invoice_number} for ₹${inv.total.toLocaleString("en-IN")} has no IRN. Mandatory under e-invoicing threshold.`, action: "Generate IRN via IRP portal immediately. Invoice invalid for buyer ITC without IRN." });
+  }
 
-  if (loading) return <div className="text-center py-20 text-zinc-400">Running compliance checks...</div>;
+  // TDS on expenses
+  for (const exp of expenses) {
+    const rule = inferTds(exp.vendor_name || "", exp.account_name || "", exp.total);
+    if (rule) {
+      const expectedTds = Math.round(exp.total * rule.rate / 100);
+      const dueDate = (() => { const d = new Date(exp.date); return d.getMonth() === 2 ? "30 Apr" : new Date(d.getFullYear(), d.getMonth() + 1, 7).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); })();
+      findings.push({ id: `TDS-${exp.id}`, sev: "Critical", cat: "TDS", party: exp.vendor_name || "Unknown", ref: exp.expense_number?.slice(-10) || exp.id, date: exp.date, amount: exp.total, issue: `TDS not deducted — ${rule.label} @${rule.rate}%`, detail: `Expense ₹${exp.total.toLocaleString("en-IN")} to "${exp.vendor_name}" under "${exp.account_name}". Expected TDS ₹${expectedTds.toLocaleString("en-IN")}. Due by ${dueDate}.`, action: `Deduct ₹${expectedTds.toLocaleString("en-IN")} u/s ${rule.sec}. Deposit by ${dueDate} via ITNS 281. File Form 26Q quarterly.` });
+    }
+    if (isBlocked(exp.account_name || "", exp.vendor_name || "")) findings.push({ id: `ITC-${exp.id}`, sev: "Warning", cat: "GST", party: exp.vendor_name || "—", ref: exp.expense_number?.slice(-10) || exp.id, date: exp.date, amount: exp.total, issue: `ITC blocked u/s 17(5) — ${exp.account_name}`, detail: `"${exp.account_name}" is a blocked ITC category. GST ₹${exp.tax_total.toLocaleString("en-IN")} cannot be claimed.`, action: "Do not claim ITC in GSTR-3B. Reverse if already claimed — interest @24% p.a." });
+  }
+
+  // SO vs Payment 2-way mismatch
+  const invByCust: Record<string, Invoice[]> = {}; const payByCust: Record<string, Payment[]> = {};
+  for (const i of invoices) { const k = (i.customer_name || "").toLowerCase(); (invByCust[k] = invByCust[k] || []).push(i); }
+  for (const p of payments) { const k = (p.customer_name || "").toLowerCase(); (payByCust[k] = payByCust[k] || []).push(p); }
+  const soSeen = new Set<string>();
+  for (const so of salesOrders) {
+    const k = (so.customer_name || "").toLowerCase();
+    if (soSeen.has(k)) continue; soSeen.add(k);
+    const totalPaid = (payByCust[k] || []).reduce((s, p) => s + p.amount, 0);
+    const totalInvoiced = (invByCust[k] || []).reduce((s, i) => s + i.total, 0);
+    if (totalPaid > 0 && totalInvoiced === 0) findings.push({ id: `2WAY-${so.id}`, sev: "Critical", cat: "Matching", party: so.customer_name, ref: so.salesorder_number, date: so.date, amount: totalPaid, issue: `₹${totalPaid.toLocaleString("en-IN")} received — zero invoices raised`, detail: `SO ${so.salesorder_number} ₹${so.total.toLocaleString("en-IN")}. Payment ₹${totalPaid.toLocaleString("en-IN")} received but no invoice. GST output liability triggered on advance receipt.`, action: "Raise tax invoice immediately. GST interest @18% p.a. from date of advance receipt." });
+    else if (totalPaid > 0 && totalInvoiced < totalPaid * 0.9) findings.push({ id: `3WAY-${so.id}`, sev: "Warning", cat: "Matching", party: so.customer_name, ref: so.salesorder_number, date: so.date, amount: totalPaid - totalInvoiced, issue: `₹${(totalPaid - totalInvoiced).toLocaleString("en-IN")} advance not invoiced`, detail: `Received ₹${totalPaid.toLocaleString("en-IN")}, invoiced ₹${totalInvoiced.toLocaleString("en-IN")}. Gap ₹${(totalPaid - totalInvoiced).toLocaleString("en-IN")} sitting as advance.`, action: `Raise invoice for balance ₹${(totalPaid - totalInvoiced).toLocaleString("en-IN")}. GST time of supply already triggered.` });
+  }
+
+  // PO vs Bill vs Payment 3-way
+  for (const po of purchaseOrders) {
+    const linkedBills = bills.filter(b => b.purchaseorder_id === po.id);
+    const linkedPayments = vendorPayments.filter(vp => linkedBills.some(b => b.vendor_name === vp.vendor_name));
+    const totalBilled = linkedBills.reduce((s, b) => s + b.total, 0);
+    const totalPaid = linkedPayments.reduce((s, p) => s + p.amount, 0);
+    if (totalPaid > 0 && linkedBills.length === 0) findings.push({ id: `PONOSUPPL-${po.id}`, sev: "Critical", cat: "Matching", party: po.vendor_name, ref: po.purchaseorder_number, date: po.date, amount: totalPaid, issue: `PO payment made — no bill accounted`, detail: `PO ${po.purchaseorder_number} ₹${po.total.toLocaleString("en-IN")}. Payment made but no bill recorded. GRN status: ${po.received_status || "unknown"}.`, action: "Book vendor bill immediately. Verify GRN. Without bill, expense is unverifiable." });
+    if (po.received_status === "fully_received" && (po.billed_status === "none" || !po.billed_status)) findings.push({ id: `GRNNOBOOK-${po.id}`, sev: "Warning", cat: "Matching", party: po.vendor_name, ref: po.purchaseorder_number, date: po.date, amount: po.total, issue: `GRN done — bill not booked`, detail: `PO ${po.purchaseorder_number}: Goods received (GRN complete) but vendor bill not yet recorded.`, action: "Book vendor bill to account for the liability. Vendor may claim interest on delayed payment." });
+  }
+
+  // Journal entries flagged
+  for (const jrn of journals) {
+    findings.push({ id: `JRN-${jrn.id}`, sev: "Info", cat: "Journal Override", party: "Journal Entry", ref: jrn.entry_number || jrn.id.slice(-8), date: jrn.journal_date, amount: jrn.total, issue: `Journal entry ₹${jrn.total.toLocaleString("en-IN")} — bypasses auto-checks`, detail: `Entry ${jrn.entry_number || jrn.id}: "${jrn.notes || "no notes"}". Manual entries bypass TDS/GST engine.`, action: "Review for TDS/GST applicability. Verify approvals and supporting documents." });
+  }
+
+  // Overdue bills payable
+  for (const bill of bills) {
+    if (bill.balance > 0 && bill.due_date) {
+      const days = daysDiff(bill.due_date);
+      if (days > 0) findings.push({ id: `BILLOD-${bill.id}`, sev: days > 60 ? "Warning" : "Info", cat: "Payables", party: bill.vendor_name, ref: bill.bill_number, date: bill.date, amount: bill.balance, issue: `Vendor bill overdue ${days}d — ₹${bill.balance.toLocaleString("en-IN")} unpaid`, detail: `Bill ${bill.bill_number} from ${bill.vendor_name} due ${bill.due_date}. Balance ₹${bill.balance.toLocaleString("en-IN")}.`, action: "Process vendor payment. Check if vendor is MSME — 45-day rule under 43B(h) applies." });
+    }
+  }
+
+  const sevCount = { Critical: findings.filter(f => f.sev === "Critical").length, Warning: findings.filter(f => f.sev === "Warning").length, Info: findings.filter(f => f.sev === "Info").length };
+  const sevStyle: Record<string, { border: string; bg: string; badge: string; text: string }> = {
+    Critical: { border: "border-red-200", bg: "bg-red-50", badge: "bg-red-500 text-white", text: "text-red-700" },
+    Warning: { border: "border-amber-200", bg: "bg-amber-50", badge: "bg-amber-400 text-black", text: "text-amber-700" },
+    Info: { border: "border-sky-200", bg: "bg-sky-50", badge: "bg-sky-500 text-white", text: "text-sky-700" },
+  };
+
+  const AUDIT_SECTIONS: { key: AuditSection; label: string }[] = [
+    { key: "overview", label: "Overview" }, { key: "customers", label: "Customer Ledger" },
+    { key: "so_match", label: "SO ↔ Payment ↔ Invoice" }, { key: "po_match", label: "PO ↔ GRN ↔ Bill ↔ Payment" },
+    { key: "gst", label: "GST Summary" }, { key: "tds", label: "TDS Summary" },
+    { key: "findings", label: `All Findings (${findings.length})` },
+  ];
+
+  if (loading) return <div className="text-center py-20 text-zinc-400">Loading audit data...</div>;
 
   return (
-    <div className="space-y-5">
-      {/* Section nav */}
-      <div className="flex gap-1 flex-wrap">
-        {SECTIONS.map(s => (
+    <div className="space-y-4">
+      <div className="flex gap-1 flex-wrap border-b border-zinc-200">
+        {AUDIT_SECTIONS.map(s => (
           <button key={s.key} onClick={() => setSection(s.key)}
-            className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition ${section === s.key ? "bg-black text-white border-black" : "bg-white border-zinc-200 text-zinc-500 hover:border-zinc-400"}`}>
+            className={`text-xs px-3 py-2 whitespace-nowrap border-b-2 -mb-px transition font-medium ${section === s.key ? "border-black text-black" : "border-transparent text-zinc-400 hover:text-zinc-700"}`}>
             {s.label}
           </button>
         ))}
@@ -963,211 +536,533 @@ function AuditTab({ clientId }: { clientId: string }) {
       {/* Overview */}
       {section === "overview" && (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <SummaryCard label="Critical Issues" value={String(counts.Critical)} color="text-red-600" />
-            <SummaryCard label="Warnings" value={String(counts.Warning)} color="text-amber-600" />
-            <SummaryCard label="Overdue Receivables" value={inrFmt(overdueTotal)} color="text-red-600" />
-            <SummaryCard label="Est. TDS Exposure" value={inrFmt(tdsExposure)} color="text-violet-600" />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Card label="Critical Issues" value={String(sevCount.Critical)} color="text-red-600" sub="Immediate action" />
+            <Card label="Warnings" value={String(sevCount.Warning)} color="text-amber-600" sub="Review needed" />
+            <Card label="Info Flags" value={String(sevCount.Info)} color="text-sky-600" sub="For awareness" />
+            <Card label="Total Findings" value={String(findings.length)} sub="All categories" />
           </div>
-          <div className="bg-white border border-zinc-200 rounded-xl p-4 space-y-2">
-            <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-3">Findings by Category</p>
-            {Array.from(new Set(findings.map(f => f.category))).map(cat => {
-              const catFindings = findings.filter(f => f.category === cat);
-              const critCount = catFindings.filter(f => f.severity === "Critical").length;
-              return (
-                <div key={cat} className="flex items-center justify-between py-2 border-b border-zinc-100 last:border-0">
-                  <span className="text-sm text-zinc-700">{cat}</span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-zinc-400">{catFindings.length} finding{catFindings.length !== 1 ? "s" : ""}</span>
-                    {critCount > 0 && <span className="text-xs bg-red-500 text-white px-1.5 py-0.5 rounded-full font-bold">{critCount} Critical</span>}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Card label="Overdue Receivables" value={inr(findings.filter(f => f.cat === "Collections").reduce((s, f) => s + f.amount, 0))} color="text-red-600" />
+            <Card label="TDS Exposure" value={inr(expenses.reduce((s, e) => { const r = inferTds(e.vendor_name || "", e.account_name || "", e.total); return s + (r ? Math.round(e.total * r.rate / 100) : 0); }, 0))} color="text-violet-600" />
+            <Card label="Matching Gaps" value={String(findings.filter(f => f.cat === "Matching").length)} color="text-amber-600" />
+            <Card label="Journal Overrides" value={String(journals.length)} color="text-orange-600" />
+          </div>
+          <div className="bg-white border border-zinc-200 rounded-xl p-5">
+            <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-4">Findings by Category</p>
+            <div className="space-y-2">
+              {Array.from(new Set(findings.map(f => f.cat))).map(cat => {
+                const catItems = findings.filter(f => f.cat === cat);
+                const crit = catItems.filter(f => f.sev === "Critical").length;
+                const warn = catItems.filter(f => f.sev === "Warning").length;
+                return (
+                  <div key={cat} className="flex items-center justify-between py-2 border-b border-zinc-100 last:border-0">
+                    <span className="text-sm font-medium text-zinc-700">{cat}</span>
+                    <div className="flex items-center gap-2">
+                      {crit > 0 && <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-bold">{crit} Critical</span>}
+                      {warn > 0 && <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{warn} Warning</span>}
+                      <span className="text-xs text-zinc-400">{catItems.length} total</span>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
-          <p className="text-xs text-zinc-400">Phase 2 (once synced): PO vs Bills vs GRN · Journal scrutiny · PT/PF · 206C TCS · Advance tax</p>
         </div>
       )}
 
-      {/* Customer 360 */}
-      {section === "customers" && (
-        <div className="space-y-3">
-          {customers.length === 0 ? <p className="text-center py-12 text-zinc-400">No customer data yet — sync from Zoho</p> : customers.map(c => {
-            const isOpen = expandedCustomer === c.name;
-            const pct = c.invoiced > 0 ? Math.min(Math.round((c.received / c.invoiced) * 100), 100) : 0;
-            const custFindings = findings.filter(f => f.party === c.name);
-            return (
-              <div key={c.name} className="bg-white border border-zinc-200 rounded-xl overflow-hidden">
-                <div className="flex items-start justify-between p-4 cursor-pointer hover:bg-zinc-50" onClick={() => setExpandedCustomer(isOpen ? null : c.name)}>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <span className="font-semibold text-zinc-900">{c.name}</span>
-                      {c.gstNumber && <span className="text-xs font-mono text-zinc-400 bg-zinc-100 px-2 py-0.5 rounded">{c.gstNumber}</span>}
-                      {custFindings.filter(f => f.severity === "Critical").length > 0 && <span className="text-xs bg-red-500 text-white px-2 py-0.5 rounded-full font-bold">{custFindings.filter(f => f.severity === "Critical").length} Critical</span>}
-                    </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-1 text-xs mt-2">
-                      <div><span className="text-zinc-400">Invoiced </span><span className="text-zinc-700">{inrFmt(c.invoiced)}</span></div>
-                      <div><span className="text-zinc-400">Received </span><span className="text-emerald-600">{inrFmt(c.received)}</span></div>
-                      <div><span className="text-zinc-400">Outstanding </span><span className={c.outstanding > 0 ? "text-amber-600" : "text-emerald-600"}>{inrFmt(c.outstanding)}</span></div>
-                      <div><span className="text-zinc-400">SOs </span><span className="text-zinc-700">{c.soCount} ({inrFmt(c.soTotal)})</span></div>
-                    </div>
-                    <div className="flex items-center gap-2 mt-2">
-                      <div className="flex-1 h-1.5 bg-zinc-100 rounded-full overflow-hidden">
-                        <div className={`h-full rounded-full ${pct >= 100 ? "bg-emerald-400" : pct >= 60 ? "bg-amber-400" : "bg-red-400"}`} style={{ width: `${pct}%` }} />
-                      </div>
-                      <span className="text-xs text-zinc-400 w-12 text-right">{pct}% paid</span>
-                    </div>
-                  </div>
-                  <span className="text-zinc-400 text-xs ml-4 mt-1 select-none">{isOpen ? "▲" : "▼"}</span>
-                </div>
-                {isOpen && (
-                  <div className="border-t border-zinc-100 divide-y divide-zinc-100">
-                    {c.invoices.length > 0 && (
-                      <div className="px-4 py-3">
-                        <p className="text-xs font-semibold text-zinc-500 mb-2">Invoices</p>
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-xs">
-                            <thead><tr className="text-zinc-400 border-b border-zinc-100">
-                              <th className="text-left py-1.5 pr-4 font-normal">Invoice #</th>
-                              <th className="text-left py-1.5 pr-4 font-normal">Date</th>
-                              <th className="text-left py-1.5 pr-4 font-normal">Due</th>
-                              <th className="text-left py-1.5 pr-4 font-normal">Status</th>
-                              <th className="text-right py-1.5 pr-4 font-normal">Total</th>
-                              <th className="text-right py-1.5 font-normal">Outstanding</th>
-                            </tr></thead>
-                            <tbody>{c.invoices.map(inv => (
-                              <tr key={inv.id} className="border-b border-zinc-50 last:border-0">
-                                <td className="py-2 pr-4 font-mono text-zinc-500">{inv.invoice_number}</td>
-                                <td className="py-2 pr-4 text-zinc-400">{fmtDate(inv.date)}</td>
-                                <td className="py-2 pr-4 text-zinc-400">{fmtDate(inv.due_date)}</td>
-                                <td className="py-2 pr-4"><Badge status={inv.status} /></td>
-                                <td className="py-2 pr-4 text-right text-zinc-700">{inrFmt(inv.total)}</td>
-                                <td className="py-2 text-right font-semibold">{inv.balance > 0 ? <span className="text-amber-600">{inrFmt(inv.balance)}</span> : <span className="text-emerald-600">Paid</span>}</td>
-                              </tr>
-                            ))}</tbody>
-                          </table>
+      {/* Customer Ledger */}
+      {section === "customers" && (() => {
+        const custMap: Record<string, { invoiced: number; received: number; outstanding: number; invCount: number; payCount: number }> = {};
+        for (const inv of invoices) {
+          const k = inv.customer_name;
+          if (!custMap[k]) custMap[k] = { invoiced: 0, received: 0, outstanding: 0, invCount: 0, payCount: 0 };
+          custMap[k].invoiced += inv.total; custMap[k].outstanding += inv.balance; custMap[k].invCount++;
+        }
+        for (const pay of payments) {
+          const k = pay.customer_name;
+          if (!custMap[k]) custMap[k] = { invoiced: 0, received: 0, outstanding: 0, invCount: 0, payCount: 0 };
+          custMap[k].received += pay.amount; custMap[k].payCount++;
+        }
+        const custs = Object.entries(custMap).sort((a, b) => b[1].invoiced - a[1].invoiced);
+        return (
+          <div className="space-y-3">
+            {custs.map(([name, c]) => {
+              const pct = c.invoiced > 0 ? Math.min(Math.round((c.received / c.invoiced) * 100), 100) : 0;
+              const custInvoices = invoices.filter(i => i.customer_name === name);
+              const custPayments = payments.filter(p => p.customer_name === name);
+              const isOpen = expanded === name;
+              return (
+                <div key={name} className="bg-white border border-zinc-200 rounded-xl overflow-hidden">
+                  <div className="p-4 cursor-pointer hover:bg-zinc-50" onClick={() => setExpanded(isOpen ? null : name)}>
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <p className="font-semibold text-zinc-900">{name}</p>
+                        <div className="grid grid-cols-4 gap-4 mt-2 text-xs">
+                          <div><span className="text-zinc-400">Invoiced </span><span className="font-medium">{inr(c.invoiced)}</span></div>
+                          <div><span className="text-zinc-400">Received </span><span className="font-medium text-emerald-600">{inr(c.received)}</span></div>
+                          <div><span className="text-zinc-400">Outstanding </span><span className={`font-medium ${c.outstanding > 0 ? "text-amber-600" : "text-emerald-600"}`}>{inr(c.outstanding)}</span></div>
+                          <div><span className="text-zinc-400">Collection </span><span className="font-medium">{pct}%</span></div>
+                        </div>
+                        <div className="flex items-center gap-2 mt-2">
+                          <div className="flex-1 h-1.5 bg-zinc-100 rounded-full"><div className={`h-full rounded-full ${pct >= 100 ? "bg-emerald-400" : pct >= 60 ? "bg-amber-400" : "bg-red-400"}`} style={{ width: `${pct}%` }} /></div>
                         </div>
                       </div>
-                    )}
-                    {c.payments.length > 0 && (
-                      <div className="px-4 py-3">
-                        <p className="text-xs font-semibold text-zinc-500 mb-2">Payments Received <span className="text-emerald-600">{inrFmt(c.received)}</span></p>
-                        <div className="space-y-1">{c.payments.map(p => (
-                          <div key={p.id} className="flex items-center justify-between text-xs">
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono text-zinc-400">{p.payment_number}</span>
-                              <span className="text-zinc-400">{fmtDate(p.date)}</span>
-                              {p.payment_mode && <span className="text-zinc-300 bg-zinc-100 px-1.5 py-0.5 rounded text-[10px]">{p.payment_mode}</span>}
-                            </div>
-                            <span className="text-emerald-600 font-semibold">{inrFmt(p.amount)}</span>
-                          </div>
-                        ))}</div>
-                      </div>
-                    )}
-                    {c.sos.length > 0 && (
-                      <div className="px-4 py-3">
-                        <p className="text-xs font-semibold text-zinc-500 mb-2">Sales Orders</p>
-                        <div className="space-y-1.5">{c.sos.map(so => {
-                          const soInvoiced = c.invoiced;
-                          const gap = so.total - soInvoiced;
-                          const matchStatus = c.received > 0 && c.invoiceCount === 0 ? { label: "⚠ Payment received, no invoice", color: "text-red-600" } : soInvoiced >= so.total * 0.95 ? { label: "✓ Fully invoiced", color: "text-emerald-600" } : gap > 0 ? { label: `${inrFmt(gap)} uninvoiced`, color: "text-zinc-400" } : { label: "—", color: "text-zinc-400" };
-                          return (
-                            <div key={so.id} className="flex items-center justify-between text-xs bg-zinc-50 rounded-lg px-3 py-2">
-                              <div className="flex items-center gap-2">
-                                <span className="font-mono text-zinc-400">{so.salesorder_number}</span>
-                                <span className="text-zinc-400">{fmtDate(so.date)}</span>
-                                <Badge status={so.status} />
-                              </div>
-                              <div className="flex items-center gap-4">
-                                <span className="text-zinc-500">{inrFmt(so.total)}</span>
-                                <span className={matchStatus.color}>{matchStatus.label}</span>
-                              </div>
-                            </div>
-                          );
-                        })}</div>
-                      </div>
-                    )}
-                    {custFindings.length > 0 && (
-                      <div className="px-4 py-3">
-                        <p className="text-xs font-semibold text-zinc-500 mb-2">Compliance Flags</p>
-                        <div className="space-y-1.5">{custFindings.map(f => (
-                          <div key={f.id} className={`text-xs rounded-lg px-3 py-2 border ${SEVSTYLE[f.severity].border} ${SEVSTYLE[f.severity].bg}`}>
-                            <span className={`font-semibold ${SEVSTYLE[f.severity].text}`}>{f.issue}</span>
-                            <p className="text-zinc-500 mt-0.5">{f.action}</p>
-                          </div>
-                        ))}</div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Findings list for matching/compliance/expenses/payables */}
-      {(section === "matching" || section === "compliance" || section === "expenses" || section === "payables") && (
-        <div className="space-y-4">
-          {section === "compliance" && (
-            <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-4 text-xs text-zinc-500 leading-relaxed">
-              <p className="font-semibold text-zinc-700 mb-1">Statutory checks running</p>
-              <p><span className="text-zinc-900 font-medium">TDS:</span> 192 (Salary), 194A (Interest), 194C (Contractors @2%), 194H (Commission @5%), 194I (Rent @10%), 194J (Professional @10%), 194M, 194O (E-Commerce @1%), 194Q (Goods >₹50L @0.1%), 195 (NRI @20%)</p>
-              <p className="mt-1"><span className="text-zinc-900 font-medium">GST:</span> ITC blocked u/s 17(5), B2B missing GSTIN, IRN missing &gt;₹5L</p>
-              <p className="mt-1"><span className="text-zinc-900 font-medium">RCM:</span> Legal, GTA, Sponsorship, Director fees, Security services</p>
-            </div>
-          )}
-          <div className="flex flex-wrap gap-2 items-center">
-            <span className="text-xs text-zinc-400">Severity:</span>
-            {["All","Critical","Warning","Info"].map(s => (
-              <button key={s} onClick={() => setFilterSev(s)} className={`text-xs px-3 py-1 rounded-full border transition ${filterSev === s ? "bg-zinc-900 text-white border-zinc-900" : "border-zinc-200 text-zinc-400 hover:border-zinc-400"}`}>
-                {s}{s !== "All" ? ` (${counts[s as keyof typeof counts] ?? 0})` : ""}
-              </button>
-            ))}
-            <span className="text-xs text-zinc-400 ml-2">Category:</span>
-            {cats.map(c => (
-              <button key={c} onClick={() => setFilterCat(c)} className={`text-xs px-3 py-1 rounded-full border transition ${filterCat === c ? "bg-zinc-900 text-white border-zinc-900" : "border-zinc-200 text-zinc-400 hover:border-zinc-400"}`}>{c}</button>
-            ))}
-          </div>
-          <p className="text-xs text-zinc-400">{sectionFindings.length} findings</p>
-          <div className="space-y-2">
-            {sectionFindings.map(f => {
-              const s = SEVSTYLE[f.severity];
-              const isOpen = expandedFinding === f.id;
-              return (
-                <div key={f.id} onClick={() => setExpandedFinding(isOpen ? null : f.id)} className={`rounded-xl border ${s.border} ${s.bg} cursor-pointer transition-all`}>
-                  <div className="flex items-start gap-3 p-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex flex-wrap items-center gap-2 mb-1">
-                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${s.badge}`}>{f.severity}</span>
-                        <span className="text-xs text-zinc-400">{f.category}</span>
-                        <span className="text-xs text-zinc-300 font-mono ml-auto">{f.date}</span>
-                      </div>
-                      <p className={`font-semibold text-sm ${s.text}`}>{f.issue}</p>
-                      <p className="text-xs text-zinc-400 mt-0.5 truncate">{f.party} · ₹{f.amount.toLocaleString("en-IN")}</p>
+                      <span className="text-zinc-400 text-xs ml-4">{isOpen ? "▲" : "▼"}</span>
                     </div>
-                    <span className="text-zinc-400 text-xs mt-1 select-none">{isOpen ? "▲" : "▼"}</span>
                   </div>
                   {isOpen && (
-                    <div className="border-t border-zinc-200 px-4 pb-4 pt-3 space-y-3">
-                      <div className="grid grid-cols-2 gap-2 text-xs">
-                        <div><span className="text-zinc-400 block">Ref</span><span className="text-zinc-700 font-mono">{f.ref}</span></div>
-                        <div><span className="text-zinc-400 block">Account</span><span className="text-zinc-700">{f.account}</span></div>
-                        <div><span className="text-zinc-400 block">Party</span><span className="text-zinc-700">{f.party}</span></div>
-                        <div><span className="text-zinc-400 block">Amount</span><span className="text-zinc-900 font-bold">₹{f.amount.toLocaleString("en-IN")}</span></div>
-                      </div>
-                      <div className="bg-zinc-50 rounded-lg p-3 text-xs text-zinc-600 leading-relaxed">
-                        <span className="text-zinc-400 block mb-1">Finding</span>{f.detail}
-                      </div>
-                      <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-700 leading-relaxed">
-                        <span className="text-emerald-600 block mb-1 font-bold">▶ Recommended Action</span>{f.action}
-                      </div>
+                    <div className="border-t border-zinc-100">
+                      {custInvoices.length > 0 && (
+                        <div className="px-4 py-3">
+                          <p className="text-xs font-semibold text-zinc-500 mb-2">Invoices</p>
+                          <Table cols={["Invoice #", "Date", "Due", "Status", "Total", "Balance"]}
+                            rows={custInvoices.map(i => [
+                              <span className="font-mono text-xs">{i.invoice_number}</span>,
+                              fdate(i.date), fdate(i.due_date), <Badge s={i.status} />,
+                              fmt(i.total, i.currency_code),
+                              <span className={i.balance > 0 ? "font-semibold text-amber-600" : "text-emerald-600"}>{i.balance > 0 ? inr(i.balance) : "Paid"}</span>,
+                            ])} />
+                        </div>
+                      )}
+                      {custPayments.length > 0 && (
+                        <div className="px-4 py-3 border-t border-zinc-100">
+                          <p className="text-xs font-semibold text-zinc-500 mb-2">Payments Received</p>
+                          <Table cols={["Receipt #", "Date", "Mode", "Amount"]}
+                            rows={custPayments.map(p => [
+                              <span className="font-mono text-xs">{p.payment_number}</span>,
+                              fdate(p.date),
+                              <span className="text-xs bg-zinc-100 px-2 py-0.5 rounded">{p.payment_mode || "—"}</span>,
+                              <span className="font-semibold text-emerald-600">{inr(p.amount)}</span>,
+                            ])} />
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
               );
             })}
-            {sectionFindings.length === 0 && <div className="text-center py-12 text-zinc-400"><p className="text-3xl mb-3">✓</p><p className="font-medium text-zinc-600">No issues found in this category</p></div>}
+            {custs.length === 0 && <p className="text-center py-12 text-zinc-400">No customer data</p>}
+          </div>
+        );
+      })()}
+
+      {/* SO Match */}
+      {section === "so_match" && (
+        <div className="space-y-4">
+          <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-4 text-xs text-zinc-500">
+            <p className="font-semibold text-zinc-700 mb-1">2-Way: SO ↔ Payment received &nbsp;|&nbsp; 3-Way: SO ↔ Payment ↔ Invoice</p>
+            <p>Flags: payment received with no invoice · payment exceeds invoiced amount · SO fully delivered but not invoiced</p>
+          </div>
+          <Table cols={["Customer", "SO #", "SO Value", "Invoiced", "Received", "Gap", "Status"]}
+            rows={salesOrders.map(so => {
+              const k = (so.customer_name || "").toLowerCase();
+              const totalInvoiced = (invByCust[k] || []).reduce((s, i) => s + i.total, 0);
+              const totalPaid = (payByCust[k] || []).reduce((s, p) => s + p.amount, 0);
+              const gap = totalPaid - totalInvoiced;
+              const status = totalPaid > 0 && totalInvoiced === 0 ? <span className="text-xs font-bold text-red-600">⚠ No Invoice</span> :
+                gap > so.total * 0.1 ? <span className="text-xs font-bold text-amber-600">⚠ Excess Advance</span> :
+                totalInvoiced >= so.total * 0.95 ? <span className="text-xs text-emerald-600">✓ Fully Invoiced</span> :
+                <span className="text-xs text-zinc-400">Partial</span>;
+              return [so.customer_name, <span className="font-mono text-xs">{so.salesorder_number}</span>, inr(so.total), inr(totalInvoiced), inr(totalPaid), <span className={gap > 0 ? "font-semibold text-amber-600" : "text-zinc-400"}>{gap > 0 ? inr(gap) : "—"}</span>, status];
+            })} empty="No sales orders" />
+        </div>
+      )}
+
+      {/* PO Match */}
+      {section === "po_match" && (
+        <div className="space-y-4">
+          <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-4 text-xs text-zinc-500">
+            <p className="font-semibold text-zinc-700 mb-1">3-Way: PO ↔ GRN ↔ Bill ↔ Payment</p>
+            <p>Flags: payment made without bill · GRN done but bill not booked · bill raised without PO</p>
+          </div>
+          <Table cols={["Vendor", "PO #", "PO Value", "GRN", "Billed", "Bill Value", "Paid", "Status"]}
+            rows={purchaseOrders.map(po => {
+              const linkedBills = bills.filter(b => b.purchaseorder_id === po.id || b.vendor_name === po.vendor_name);
+              const totalBilled = linkedBills.reduce((s, b) => s + b.total, 0);
+              const totalPaid = vendorPayments.filter(vp => vp.vendor_name === po.vendor_name).reduce((s, p) => s + p.amount, 0);
+              const status = totalPaid > 0 && linkedBills.length === 0 ? <span className="text-xs font-bold text-red-600">⚠ Paid, No Bill</span> :
+                po.received_status === "fully_received" && !po.billed_status ? <span className="text-xs font-bold text-amber-600">⚠ GRN, No Bill</span> :
+                totalBilled > 0 && totalPaid >= totalBilled * 0.95 ? <span className="text-xs text-emerald-600">✓ Clear</span> :
+                <span className="text-xs text-zinc-400">In Progress</span>;
+              return [po.vendor_name, <span className="font-mono text-xs">{po.purchaseorder_number}</span>, inr(po.total), <Badge s={po.received_status || "none"} />, <Badge s={po.billed_status || "none"} />, totalBilled > 0 ? inr(totalBilled) : "—", totalPaid > 0 ? inr(totalPaid) : "—", status];
+            })} empty="No purchase orders — sync from Zoho" />
+        </div>
+      )}
+
+      {/* GST Summary */}
+      {section === "gst" && (() => {
+        const months: Record<string, { output: number; input: number; blocked: number; invoiceCount: number; expCount: number }> = {};
+        for (const inv of invoices) {
+          const m = inv.date?.slice(0, 7) || "unknown";
+          if (!months[m]) months[m] = { output: 0, input: 0, blocked: 0, invoiceCount: 0, expCount: 0 };
+          months[m].output += inv.tax_total; months[m].invoiceCount++;
+        }
+        for (const exp of expenses) {
+          const m = exp.date?.slice(0, 7) || "unknown";
+          if (!months[m]) months[m] = { output: 0, input: 0, blocked: 0, invoiceCount: 0, expCount: 0 };
+          if (isBlocked(exp.account_name || "", exp.vendor_name || "")) months[m].blocked += exp.tax_total;
+          else months[m].input += exp.tax_total;
+          months[m].expCount++;
+        }
+        const rows = Object.entries(months).sort((a, b) => b[0].localeCompare(a[0]));
+        return (
+          <div className="space-y-4">
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-xs text-blue-700">
+              <p className="font-semibold mb-1">GST Filing Summary — Monthly</p>
+              <p>Output GST = collected on sales invoices · Input GST = paid on eligible expenses · Net Payable = Output − Input · Blocked ITC = ineligible claims u/s 17(5)</p>
+            </div>
+            <Table cols={["Month", "Output GST", "Input GST", "Blocked ITC", "Net Payable", "Invoices", "Expenses"]}
+              rows={rows.map(([m, d]) => [
+                <span className="font-semibold">{m}</span>,
+                <span className="text-red-600 font-medium">{inr(d.output)}</span>,
+                <span className="text-emerald-600">{inr(d.input)}</span>,
+                <span className="text-amber-600">{d.blocked > 0 ? inr(d.blocked) : "—"}</span>,
+                <span className="font-bold text-zinc-900">{inr(d.output - d.input)}</span>,
+                String(d.invoiceCount), String(d.expCount),
+              ])} empty="No GST data" />
+          </div>
+        );
+      })()}
+
+      {/* TDS Summary */}
+      {section === "tds" && (() => {
+        const tdsItems = expenses.map(exp => {
+          const rule = inferTds(exp.vendor_name || "", exp.account_name || "", exp.total);
+          if (!rule) return null;
+          return { exp, rule, expectedTds: Math.round(exp.total * rule.rate / 100) };
+        }).filter(Boolean) as { exp: Expense; rule: typeof TDS[0]; expectedTds: number }[];
+        const bySec: Record<string, { count: number; total: number; tds: number }> = {};
+        for (const t of tdsItems) {
+          if (!bySec[t.rule.sec]) bySec[t.rule.sec] = { count: 0, total: 0, tds: 0 };
+          bySec[t.rule.sec].count++; bySec[t.rule.sec].total += t.exp.total; bySec[t.rule.sec].tds += t.expectedTds;
+        }
+        return (
+          <div className="space-y-4">
+            <div className="bg-violet-50 border border-violet-200 rounded-xl p-4 text-xs text-violet-700">
+              <p className="font-semibold mb-1">TDS Summary — for 26Q / 27Q Quarterly Filing</p>
+              <p>Estimated TDS liability based on expense data. Inferred from vendor name + account head + amount threshold. Verify and deduct before payment.</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Card label="Total TDS Liability" value={inr(tdsItems.reduce((s, t) => s + t.expectedTds, 0))} color="text-violet-600" />
+              <Card label="Transactions Liable" value={String(tdsItems.length)} />
+            </div>
+            <Table cols={["Section", "Transactions", "Expense Total", "TDS @Rate"]}
+              rows={Object.entries(bySec).map(([sec, d]) => {
+                const rule = TDS.find(r => r.sec === sec)!;
+                return [<span className="font-semibold">{rule.label}</span>, String(d.count), inr(d.total), <span className="font-bold text-violet-600">{inr(d.tds)}</span>];
+              })} empty="No TDS liability found" />
+            <Table cols={["Vendor", "Account", "Date", "Amount", "Section", "TDS Due"]}
+              rows={tdsItems.map(t => [
+                t.exp.vendor_name || "—",
+                <span className="text-xs">{t.exp.account_name || "—"}</span>,
+                fdate(t.exp.date),
+                inr(t.exp.total),
+                <span className="text-xs font-mono">{t.rule.sec}</span>,
+                <span className="font-bold text-violet-600">{inr(t.expectedTds)}</span>,
+              ])} />
+          </div>
+        );
+      })()}
+
+      {/* All Findings */}
+      {section === "findings" && (
+        <div className="space-y-3">
+          {["Critical", "Warning", "Info"].map(sev =>
+            findings.filter(f => f.sev === sev).map(f => {
+              const s = sevStyle[f.sev];
+              const isOpen = expanded === f.id;
+              return (
+                <div key={f.id} onClick={() => setExpanded(isOpen ? null : f.id)} className={`rounded-xl border ${s.border} ${s.bg} cursor-pointer`}>
+                  <div className="flex items-start gap-3 p-4">
+                    <div className="flex-1">
+                      <div className="flex flex-wrap items-center gap-2 mb-1">
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${s.badge}`}>{f.sev}</span>
+                        <span className="text-xs text-zinc-400">{f.cat}</span>
+                        <span className="text-xs text-zinc-300 ml-auto">{f.date}</span>
+                      </div>
+                      <p className={`font-semibold text-sm ${s.text}`}>{f.issue}</p>
+                      <p className="text-xs text-zinc-400 mt-0.5">{f.party} · ₹{f.amount.toLocaleString("en-IN")}</p>
+                    </div>
+                    <span className="text-zinc-400 text-xs select-none">{isOpen ? "▲" : "▼"}</span>
+                  </div>
+                  {isOpen && (
+                    <div className="border-t border-zinc-200 px-4 pb-4 pt-3 space-y-2">
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div><span className="text-zinc-400">Ref </span><span className="font-mono text-zinc-700">{f.ref}</span></div>
+                        <div><span className="text-zinc-400">Amount </span><span className="font-bold">₹{f.amount.toLocaleString("en-IN")}</span></div>
+                      </div>
+                      <div className="bg-white rounded-lg p-3 text-xs text-zinc-600 border border-zinc-100">{f.detail}</div>
+                      <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-700"><span className="font-bold block mb-0.5">▶ Action Required</span>{f.action}</div>
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+          {findings.length === 0 && <div className="text-center py-12 text-zinc-400"><p className="text-4xl mb-3">✓</p><p className="font-medium">No issues found</p></div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Compliance Module ────────────────────────────────────────────────────────
+function ComplianceModule({ orgId, clientName }: { orgId: string; clientName: string }) {
+  const [section, setSection] = useState<CompSection>("summary");
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    Promise.all([
+      supabase.from("finance_dashboard").select("*").eq("org_id", orgId),
+      supabase.from("expenses").select("*").eq("org_id", orgId),
+    ]).then(([inv, exp]) => {
+      setInvoices(inv.data || []); setExpenses(exp.data || []); setLoading(false);
+    });
+  }, [orgId]);
+
+  const COMP_SECTIONS: { key: CompSection; label: string }[] = [
+    { key: "summary", label: "Client Summary" },
+    { key: "gst_filing", label: "GST Filing" },
+    { key: "tds_filing", label: "TDS Filing" },
+    { key: "pt_pf", label: "PT / PF" },
+    { key: "it_filing", label: "IT Filing" },
+  ];
+
+  if (loading) return <div className="text-center py-20 text-zinc-400">Loading compliance data...</div>;
+
+  const totalSales = invoices.reduce((s, i) => s + i.total, 0);
+  const totalGstOutput = invoices.reduce((s, i) => s + i.tax_total, 0);
+  const totalGstInput = expenses.filter(e => !isBlocked(e.account_name || "", e.vendor_name || "")).reduce((s, e) => s + (e.tax_total || 0), 0);
+  const tdsItems = expenses.filter(e => inferTds(e.vendor_name || "", e.account_name || "", e.total));
+  const totalTdsLiability = tdsItems.reduce((s, e) => { const r = inferTds(e.vendor_name || "", e.account_name || "", e.total); return s + (r ? Math.round(e.total * r.rate / 100) : 0); }, 0);
+  const overdueInvoices = invoices.filter(i => i.balance > 0 && i.due_date && daysDiff(i.due_date) > 0);
+  const missingIRN = invoices.filter(i => i.total >= 500000 && !i.reference_number);
+  const missingGSTIN = invoices.filter(i => !i.gst_number && i.tax_total > 0);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-1 flex-wrap border-b border-zinc-200">
+        {COMP_SECTIONS.map(s => (
+          <button key={s.key} onClick={() => setSection(s.key)}
+            className={`text-xs px-3 py-2 whitespace-nowrap border-b-2 -mb-px transition font-medium ${section === s.key ? "border-black text-black" : "border-transparent text-zinc-400 hover:text-zinc-700"}`}>
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      {section === "summary" && (
+        <div className="space-y-6">
+          <div className="bg-white border border-zinc-200 rounded-xl p-6">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <p className="text-lg font-bold text-zinc-900">{clientName}</p>
+                <p className="text-sm text-zinc-400">Compliance Summary — {new Date().toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</p>
+                <p className="text-xs text-zinc-400 mt-0.5">Prepared by {COMPANY_NAME}</p>
+              </div>
+              <span className={`text-xs font-bold px-3 py-1 rounded-full ${missingIRN.length > 0 || overdueInvoices.length > 3 ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700"}`}>
+                {missingIRN.length > 0 || overdueInvoices.length > 3 ? "Action Required" : "Generally Compliant"}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              <div className="border border-zinc-100 rounded-lg p-3">
+                <p className="text-xs text-zinc-400 mb-1">Total Turnover</p>
+                <p className="text-lg font-bold">{inr(totalSales)}</p>
+              </div>
+              <div className="border border-zinc-100 rounded-lg p-3">
+                <p className="text-xs text-zinc-400 mb-1">GST Output</p>
+                <p className="text-lg font-bold text-red-600">{inr(totalGstOutput)}</p>
+              </div>
+              <div className="border border-zinc-100 rounded-lg p-3">
+                <p className="text-xs text-zinc-400 mb-1">GST Input (ITC)</p>
+                <p className="text-lg font-bold text-emerald-600">{inr(totalGstInput)}</p>
+              </div>
+              <div className="border border-zinc-100 rounded-lg p-3">
+                <p className="text-xs text-zinc-400 mb-1">Net GST Payable</p>
+                <p className="text-lg font-bold text-blue-600">{inr(totalGstOutput - totalGstInput)}</p>
+              </div>
+              <div className="border border-zinc-100 rounded-lg p-3">
+                <p className="text-xs text-zinc-400 mb-1">TDS Liability</p>
+                <p className="text-lg font-bold text-violet-600">{inr(totalTdsLiability)}</p>
+              </div>
+              <div className="border border-zinc-100 rounded-lg p-3">
+                <p className="text-xs text-zinc-400 mb-1">Overdue Receivables</p>
+                <p className="text-lg font-bold text-amber-600">{inr(overdueInvoices.reduce((s, i) => s + i.balance, 0))}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Key Compliance Alerts</p>
+            {missingIRN.length > 0 && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                <p className="font-semibold text-red-700 text-sm">⚠ {missingIRN.length} invoice(s) above ₹5L missing IRN/e-Invoice</p>
+                <p className="text-xs text-red-600 mt-1">Invoices: {missingIRN.map(i => i.invoice_number).join(", ")}</p>
+                <p className="text-xs text-red-500 mt-1">Action: Generate IRN from IRP portal. These invoices are invalid for buyer ITC without IRN.</p>
+              </div>
+            )}
+            {missingGSTIN.length > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                <p className="font-semibold text-amber-700 text-sm">⚠ {missingGSTIN.length} B2B invoice(s) missing customer GSTIN</p>
+                <p className="text-xs text-amber-600 mt-1">Action: Collect GSTIN from customers before next GSTR-1 filing.</p>
+              </div>
+            )}
+            {totalTdsLiability > 0 && (
+              <div className="bg-violet-50 border border-violet-200 rounded-xl p-4">
+                <p className="font-semibold text-violet-700 text-sm">⚠ Estimated TDS liability ₹{totalTdsLiability.toLocaleString("en-IN")} on {tdsItems.length} transaction(s)</p>
+                <p className="text-xs text-violet-600 mt-1">Action: Deduct TDS before vendor payments. Deposit by 7th of following month. File Form 26Q quarterly.</p>
+              </div>
+            )}
+            {overdueInvoices.length === 0 && missingIRN.length === 0 && missingGSTIN.length === 0 && totalTdsLiability === 0 && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+                <p className="font-semibold text-emerald-700 text-sm">✓ No major compliance issues identified</p>
+                <p className="text-xs text-emerald-600 mt-1">Continue regular monitoring and ensure timely GST/TDS filings.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {section === "gst_filing" && (
+        <div className="space-y-4">
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-xs text-blue-700">
+            <p className="font-semibold text-sm mb-2">GST Filing Checklist</p>
+            <div className="grid grid-cols-2 gap-2">
+              {[["GSTR-1", "11th of next month", "Outward supplies"], ["GSTR-3B", "20th of next month", "Summary + payment"], ["GSTR-2A/2B", "Auto-populated", "ITC reconciliation"], ["GSTR-9", "31st Dec", "Annual return"]].map(([form, due, desc]) => (
+                <div key={form} className="bg-white rounded-lg p-2 border border-blue-100">
+                  <p className="font-bold text-blue-800">{form}</p>
+                  <p className="text-blue-600">Due: {due}</p>
+                  <p className="text-blue-400">{desc}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <Card label="Output GST (GSTR-1)" value={inr(totalGstOutput)} color="text-red-600" sub="Collected from customers" />
+            <Card label="Input GST (ITC)" value={inr(totalGstInput)} color="text-emerald-600" sub="Eligible for set-off" />
+            <Card label="Net Payable" value={inr(Math.max(0, totalGstOutput - totalGstInput))} color="text-blue-600" sub="To be deposited" />
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-3">Monthly GST Summary</p>
+            <Table cols={["Month", "Sales (B2B)", "Sales (B2C)", "Output GST", "Input GST", "Net Payable"]}
+              rows={(() => {
+                const months: Record<string, { b2b: number; b2c: number; output: number; input: number }> = {};
+                for (const inv of invoices) {
+                  const m = inv.date?.slice(0, 7) || "";
+                  if (!months[m]) months[m] = { b2b: 0, b2c: 0, output: 0, input: 0 };
+                  if (inv.gst_number) months[m].b2b += inv.total; else months[m].b2c += inv.total;
+                  months[m].output += inv.tax_total;
+                }
+                for (const exp of expenses) {
+                  const m = exp.date?.slice(0, 7) || "";
+                  if (!months[m]) months[m] = { b2b: 0, b2c: 0, output: 0, input: 0 };
+                  if (!isBlocked(exp.account_name || "", exp.vendor_name || "")) months[m].input += (exp.tax_total || 0);
+                }
+                return Object.entries(months).sort((a, b) => b[0].localeCompare(a[0])).map(([m, d]) => [
+                  <span className="font-semibold">{m}</span>, inr(d.b2b), inr(d.b2c),
+                  <span className="text-red-600">{inr(d.output)}</span>,
+                  <span className="text-emerald-600">{inr(d.input)}</span>,
+                  <span className="font-bold">{inr(d.output - d.input)}</span>,
+                ]);
+              })()} empty="No data" />
+          </div>
+        </div>
+      )}
+
+      {section === "tds_filing" && (
+        <div className="space-y-4">
+          <div className="bg-violet-50 border border-violet-200 rounded-xl p-4 text-xs text-violet-700">
+            <p className="font-semibold text-sm mb-2">TDS Filing Checklist</p>
+            <div className="grid grid-cols-2 gap-2">
+              {[["Form 26Q", "Quarterly (Jul/Oct/Jan/May)", "TDS on payments to residents"], ["Form 27Q", "Quarterly", "TDS on NRI payments"], ["Form 16A", "15 days after Q-end", "TDS certificate to deductee"], ["ITNS 281", "7th of next month (Mar: 30 Apr)", "Monthly TDS deposit challan"]].map(([form, due, desc]) => (
+                <div key={form} className="bg-white rounded-lg p-2 border border-violet-100">
+                  <p className="font-bold text-violet-800">{form}</p>
+                  <p className="text-violet-600">Due: {due}</p>
+                  <p className="text-violet-400">{desc}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+          <Card label="Total TDS to Deduct & Deposit" value={inr(totalTdsLiability)} color="text-violet-600" sub={`${tdsItems.length} transactions liable`} />
+          <Table cols={["Section", "Vendor", "Account", "Expense", "Rate", "TDS Due", "Deposit By"]}
+            rows={tdsItems.map(e => {
+              const rule = inferTds(e.vendor_name || "", e.account_name || "", e.total)!;
+              const tds = Math.round(e.total * rule.rate / 100);
+              const d = new Date(e.date);
+              const dueDate = d.getMonth() === 2 ? "30 Apr" : new Date(d.getFullYear(), d.getMonth() + 1, 7).toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+              return [
+                <span className="font-mono text-xs font-bold text-violet-700">{rule.sec}</span>,
+                e.vendor_name || "—", <span className="text-xs">{e.account_name || "—"}</span>,
+                inr(e.total), `${rule.rate}%`,
+                <span className="font-bold text-violet-600">{inr(tds)}</span>,
+                <span className="text-xs font-medium text-zinc-500">{dueDate}</span>,
+              ];
+            })} empty="No TDS liability found" />
+        </div>
+      )}
+
+      {section === "pt_pf" && (
+        <div className="space-y-4">
+          <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-5">
+            <p className="font-semibold text-zinc-700 mb-3">Professional Tax (PT) & Provident Fund (PF)</p>
+            <div className="space-y-3 text-sm text-zinc-600">
+              <div className="flex gap-3 p-3 bg-white border border-zinc-100 rounded-lg">
+                <div className="w-2 h-2 rounded-full bg-amber-400 mt-1.5 flex-shrink-0"></div>
+                <div>
+                  <p className="font-semibold text-zinc-800">Professional Tax (PT)</p>
+                  <p className="text-xs mt-0.5">Monthly deduction from employee salary. Rate varies by state. Maharashtra: up to ₹200/month. Due by last day of following month.</p>
+                  <p className="text-xs text-amber-600 mt-1">⚠ Requires payroll data — connect payroll system or enter manually to enable auto-calculation.</p>
+                </div>
+              </div>
+              <div className="flex gap-3 p-3 bg-white border border-zinc-100 rounded-lg">
+                <div className="w-2 h-2 rounded-full bg-blue-400 mt-1.5 flex-shrink-0"></div>
+                <div>
+                  <p className="font-semibold text-zinc-800">Provident Fund (PF / EPF)</p>
+                  <p className="text-xs mt-0.5">12% of basic salary from employee + 12% employer contribution. ECR filing by 15th of next month. Applicable if 20+ employees.</p>
+                  <p className="text-xs text-blue-600 mt-1">⚠ Requires payroll data. Once payroll is synced, PF liability, ECR filing, and monthly challan amounts will auto-populate here.</p>
+                </div>
+              </div>
+              <div className="flex gap-3 p-3 bg-white border border-zinc-100 rounded-lg">
+                <div className="w-2 h-2 rounded-full bg-purple-400 mt-1.5 flex-shrink-0"></div>
+                <div>
+                  <p className="font-semibold text-zinc-800">ESI (Employee State Insurance)</p>
+                  <p className="text-xs mt-0.5">3.25% employer + 0.75% employee on gross salary ≤ ₹21,000/month. Monthly challan by 15th.</p>
+                  <p className="text-xs text-purple-600 mt-1">⚠ Requires payroll data to enable.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {section === "it_filing" && (
+        <div className="space-y-4">
+          <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-5">
+            <p className="font-semibold text-zinc-700 mb-4">Income Tax Filing Summary</p>
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <Card label="Total Revenue (Gross)" value={inr(totalSales)} />
+              <Card label="Total Expenses" value={inr(expenses.reduce((s, e) => s + e.total, 0))} color="text-red-600" />
+              <Card label="Net Profit (Indicative)" value={inr(totalSales - expenses.reduce((s, e) => s + e.total, 0))} color="text-emerald-600" />
+              <Card label="TDS Deducted (as deductee)" value={inr(0)} sub="Add from Form 26AS" />
+            </div>
+            <div className="space-y-3 text-sm">
+              {[
+                { form: "ITR-6 / ITR-3", due: "31st Oct (companies/LLPs with audit)", desc: "File income tax return. Attach audit report u/s 44AB if applicable." },
+                { form: "Form 3CA/3CB + 3CD", due: "30th Sep (audit cases)", desc: "Tax audit report if turnover exceeds ₹1 Cr (business) / ₹50L (professional)." },
+                { form: "Advance Tax", due: "Jun 15% · Sep 45% · Dec 75% · Mar 100%", desc: "If estimated tax liability &gt; ₹10,000. Interest u/s 234B/234C if missed." },
+                { form: "Form 26AS / AIS", due: "Verify before filing", desc: "Reconcile TDS credits, advance tax paid, and high-value transactions." },
+              ].map(item => (
+                <div key={item.form} className="flex gap-3 p-3 bg-white border border-zinc-100 rounded-lg">
+                  <div className="flex-1">
+                    <p className="font-semibold text-zinc-800 text-sm">{item.form}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">Due: {item.due}</p>
+                    <p className="text-xs text-zinc-400 mt-0.5">{item.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -1175,152 +1070,114 @@ function AuditTab({ clientId }: { clientId: string }) {
   );
 }
 
-// ============================================
-// CLIENT MODULE
-// ============================================
-const SUB_MODULES: { key: SubModule; label: string }[] = [
-  { key: "invoices", label: "Invoices" },
-  { key: "sales_orders", label: "Sales Orders" },
-  { key: "estimates", label: "Estimates" },
-  { key: "payments", label: "Payments" },
-  { key: "expenses", label: "Expenses" },
-  { key: "audit", label: "🔍 Audit & Compliance" },
-];
-
+// ─── Client Module ────────────────────────────────────────────────────────────
 function ClientModule({ client, onBack }: { client: Client; onBack: () => void }) {
-  const [activeTab, setActiveTab] = useState<SubModule>("invoices");
+  const [module, setModule] = useState<Module>("accounting");
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const orgId = client.org_id ?? client.id;
 
   useEffect(() => {
     try {
-      const tab = window.location.hash.replace("#","").split("|")[1];
-      const valid = ["invoices","sales_orders","estimates","payments","expenses","audit"];
-      if (tab && valid.includes(tab)) setActiveTab(tab as SubModule);
+      const m = window.location.hash.replace("#", "").split("|")[1];
+      if (m === "audit" || m === "compliance") setModule(m);
     } catch {}
   }, []);
-  const [syncing, setSyncing] = useState(false);
-  const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
   async function handleSync() {
-    setSyncing(true);
-    setSyncMsg(null);
+    setSyncing(true); setSyncMsg(null);
     try {
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/zoho-sync`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ client_id: client.id }),
-        }
-      );
-      const result = await res.json();
-      if (result.success) {
-        setSyncMsg(`✓ Synced ${result.total_records} records`);
-      } else {
-        setSyncMsg(`✗ ${result.error || "Sync failed"}`);
-      }
-    } catch (e: any) {
-      setSyncMsg(`✗ ${e.message}`);
-    }
+      const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/zoho-sync`, { method: "POST", headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ org_id: orgId }) });
+      const r = await res.json();
+      setSyncMsg(r.success ? `✓ Synced ${r.total_records} records` : `✗ ${r.error || "Failed"}`);
+    } catch (e: any) { setSyncMsg(`✗ ${e.message}`); }
     setSyncing(false);
   }
 
+  const MODULES: { key: Module; label: string; desc: string }[] = [
+    { key: "accounting", label: "📒 Accounting", desc: "Sales · Purchases · Expenses · Journals" },
+    { key: "audit", label: "🔍 Internal Audit", desc: "Matching · GST · TDS · Findings · MIS" },
+    { key: "compliance", label: "📋 Compliance & Findings", desc: "Filing summaries · Client presentation · IT" },
+  ];
+
   return (
-    <div className="min-h-screen bg-white text-black font-sans">
-      <div className="border-b border-zinc-200 px-8 py-3 flex items-center justify-between bg-white sticky top-0 z-10">
+    <div className="min-h-screen bg-white font-sans">
+      {/* Header */}
+      <div className="border-b border-zinc-200 px-6 py-3 flex items-center justify-between sticky top-0 bg-white z-10">
         <div className="flex items-center gap-4">
-          <img src={COMPANY_LOGO} alt="CA India" className="h-10 w-auto object-contain" />
+          <img src={COMPANY_LOGO} alt="CA" className="h-9 w-auto object-contain" />
           <div className="border-l border-zinc-200 pl-4 flex items-center gap-2">
-            <button onClick={onBack} className="text-zinc-400 hover:text-black transition text-sm">← All Clients</button>
-            <span className="text-zinc-300">/</span>
+            <button onClick={onBack} className="text-zinc-400 hover:text-black text-sm transition">← Clients</button>
+            <span className="text-zinc-200">/</span>
             <div>
-              <h1 className="text-base font-bold text-black">{client.name}</h1>
-              <span className={`text-xs px-2 py-0.5 rounded border ${client.source === "zoho" ? "border-blue-200 text-blue-600 bg-blue-50" : "border-purple-200 text-purple-600 bg-purple-50"}`}>
-                {client.source.toUpperCase()}
-              </span>
+              <p className="font-bold text-black text-sm">{client.name}</p>
+              <span className="text-xs text-zinc-400">{client.source?.toUpperCase()}</span>
             </div>
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {syncMsg && <span className={`text-xs font-medium ${syncMsg.startsWith("✓") ? "text-emerald-600" : "text-red-500"}`}>{syncMsg}</span>}
+          {syncMsg && <span className={`text-xs ${syncMsg.startsWith("✓") ? "text-emerald-600" : "text-red-500"}`}>{syncMsg}</span>}
           {client.source === "zoho" && (
-            <button onClick={handleSync} disabled={syncing}
-              className="text-xs px-3 py-1.5 rounded border border-zinc-300 hover:bg-zinc-100 text-zinc-700 transition disabled:opacity-50">
+            <button onClick={handleSync} disabled={syncing} className="text-xs px-3 py-1.5 rounded border border-zinc-300 hover:bg-zinc-100 transition disabled:opacity-50">
               {syncing ? "Syncing..." : "⟳ Sync Zoho"}
             </button>
           )}
         </div>
       </div>
-      <div className="max-w-6xl mx-auto px-8 py-6 space-y-5">
-        <div className="flex gap-1 border-b border-zinc-200 overflow-x-auto">
-          {SUB_MODULES.map(m => (
-            <button key={m.key} onClick={() => { setActiveTab(m.key); try { const id = window.location.hash.replace("#","").split("|")[0]; window.location.hash = id + "|" + m.key; } catch {} }}
-              className={`text-sm px-4 py-2.5 whitespace-nowrap transition border-b-2 -mb-px font-medium ${activeTab === m.key ? "border-black text-black" : "border-transparent text-zinc-400 hover:text-zinc-700"}`}>
-              {m.label}
-            </button>
-          ))}
-        </div>
-        {activeTab === "invoices" && <InvoicesTab clientId={client.org_id ?? client.id} />}
-        {activeTab === "sales_orders" && <SalesOrdersTab clientId={client.org_id ?? client.id} />}
-        {activeTab === "estimates" && <EstimatesTab clientId={client.org_id ?? client.id} />}
-        {activeTab === "payments" && <PaymentsTab clientId={client.org_id ?? client.id} />}
-        {activeTab === "expenses" && <ExpensesTab clientId={client.org_id ?? client.id} />}
-        {activeTab === "audit" && <AuditTab clientId={client.org_id ?? client.id} />}
+
+      {/* Module selector */}
+      <div className="border-b border-zinc-200 px-6 flex gap-0">
+        {MODULES.map(m => (
+          <button key={m.key} onClick={() => { setModule(m.key); try { const id = window.location.hash.replace("#","").split("|")[0]; window.location.hash = id + "|" + m.key; } catch {} }}
+            className={`flex flex-col px-5 py-3 border-b-2 -mb-px transition text-left ${module === m.key ? "border-black" : "border-transparent hover:border-zinc-300"}`}>
+            <span className={`text-sm font-semibold ${module === m.key ? "text-black" : "text-zinc-400"}`}>{m.label}</span>
+            <span className="text-xs text-zinc-400 mt-0.5">{m.desc}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Module content */}
+      <div className="max-w-7xl mx-auto px-6 py-6">
+        {module === "accounting" && <AccountingModule orgId={orgId} />}
+        {module === "audit" && <AuditModule orgId={orgId} />}
+        {module === "compliance" && <ComplianceModule orgId={orgId} clientName={client.name} />}
       </div>
     </div>
   );
 }
 
-// ============================================
-// DASHBOARD (CLIENT LIST)
-// ============================================
+// ─── Dashboard ────────────────────────────────────────────────────────────────
 function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
-  // Use URL hash to track active client — survives page refresh
+  const [search, setSearch] = useState("");
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
 
   useEffect(() => {
-    try {
-      const hash = window.location.hash.replace("#", "").split("|")[0];
-      if (hash) setActiveClientId(hash);
-    } catch {}
+    try { const hash = window.location.hash.replace("#","").split("|")[0]; if (hash) setActiveClientId(hash); } catch {}
   }, []);
 
   useEffect(() => {
-    supabase.from("clients").select("*").order("name")
-      .then(({ data }) => { setClients(data || []); setLoading(false); });
+    supabase.from("clients").select("*").order("name").then(({ data }) => { setClients(data || []); setLoading(false); });
   }, []);
 
   useEffect(() => {
     if (!activeClientId) return;
-    try {
-      const tab = window.location.hash.replace("#","").split("|")[1] || "invoices";
-      window.location.hash = activeClientId + "|" + tab;
-    } catch {}
+    try { const tab = window.location.hash.replace("#","").split("|")[1] || "accounting"; window.location.hash = activeClientId + "|" + tab; } catch {}
   }, [activeClientId]);
 
   const activeClient = clients.find(c => c.id === activeClientId) || null;
-
-  if (loading && activeClientId) {
-    return <div className="min-h-screen bg-white flex items-center justify-center"><p className="text-zinc-400 text-sm animate-pulse">Loading...</p></div>;
-  }
-
-  if (activeClient) {
-    return <ClientModule client={activeClient} onBack={() => setActiveClientId(null)} />;
-  }
-
+  const filtered = clients.filter(c => c.name?.toLowerCase().includes(search.toLowerCase()));
   const today = new Date().toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "long", year: "numeric" });
-  const [search, setSearch] = useState("");
-  const filteredClients = clients.filter(c => c.name?.toLowerCase().includes(search.toLowerCase()));
+
+  if (loading && activeClientId) return <div className="min-h-screen bg-white flex items-center justify-center"><p className="text-zinc-400 animate-pulse">Loading...</p></div>;
+  if (activeClient) return <ClientModule client={activeClient} onBack={() => { setActiveClientId(null); try { window.location.hash = ""; } catch {} }} />;
 
   return (
-    <div className="min-h-screen bg-white text-black font-sans">
-      <div className="border-b border-zinc-200 px-8 py-3 flex items-center justify-between bg-white">
+    <div className="min-h-screen bg-white font-sans">
+      <div className="border-b border-zinc-200 px-8 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <img src={COMPANY_LOGO} alt="CA India" className="h-10 w-auto object-contain" />
+          <img src={COMPANY_LOGO} alt="CA" className="h-10 w-auto object-contain" />
           <div className="border-l border-zinc-200 pl-3">
             <p className="text-sm font-bold text-zinc-900">{COMPANY_NAME}</p>
             <p className="text-xs text-zinc-400">Finance Dashboard · {today}</p>
@@ -1328,44 +1185,41 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         </div>
         <button onClick={onLogout} className="text-xs px-3 py-1.5 rounded border border-zinc-300 hover:bg-zinc-100 text-zinc-600 transition">Sign Out</button>
       </div>
-      <div className="max-w-4xl mx-auto px-8 py-8">
+      <div className="max-w-3xl mx-auto px-8 py-8">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xs font-semibold text-zinc-400 uppercase tracking-widest">Clients</h2>
-          <span className="text-xs text-zinc-400">{filteredClients.length} of {clients.length} entities</span>
+          <span className="text-xs text-zinc-400">{filtered.length} of {clients.length}</span>
         </div>
         <div className="relative mb-4">
-          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search clients..." autoFocus
-            className="w-full pl-9 pr-4 py-2.5 border border-zinc-200 rounded-lg text-sm text-black placeholder-zinc-400 focus:outline-none focus:border-black focus:ring-1 focus:ring-black transition" />
-          {search && <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-black text-lg leading-none">×</button>}
+          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search clients..." autoFocus className="w-full pl-9 pr-4 py-2.5 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-black focus:ring-1 focus:ring-black transition" />
+          {search && <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-black text-lg">×</button>}
         </div>
         {loading ? (
-          <div className="text-center py-20 text-zinc-400 text-sm">Loading...</div>
+          <div className="text-center py-20 text-zinc-400">Loading clients...</div>
         ) : (
           <div className="border border-zinc-200 rounded-xl overflow-hidden">
             <div className="grid grid-cols-12 bg-zinc-50 border-b border-zinc-200 px-6 py-2.5 text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-              <div className="col-span-9">Client Name</div>
-              <div className="col-span-2">Source</div>
+              <div className="col-span-8">Client Name</div>
+              <div className="col-span-3">Source</div>
               <div className="col-span-1"></div>
             </div>
-            {filteredClients.length === 0 ? (
-              <div className="text-center py-12 text-zinc-400 text-sm">No clients found for &ldquo;{search}&rdquo;</div>
-            ) : filteredClients.map((client, i) => (
+            {filtered.length === 0 ? (
+              <div className="text-center py-10 text-zinc-400 text-sm">No clients found</div>
+            ) : filtered.map((client, i) => (
               <button key={client.id}
-                onClick={() => { try { window.location.hash = client.id + "|invoices"; } catch {} setActiveClientId(client.id); }}
+                onClick={() => { try { window.location.hash = client.id + "|accounting"; } catch {} setActiveClientId(client.id); }}
                 className="w-full grid grid-cols-12 items-center px-6 py-4 text-left hover:bg-zinc-50 transition border-b border-zinc-100 last:border-0 group">
-                <div className="col-span-9 flex items-center gap-4">
-                  <span className="text-xs text-zinc-400 w-5 text-right flex-shrink-0">{String(i + 1).padStart(2, "0")}</span>
+                <div className="col-span-8 flex items-center gap-4">
+                  <span className="text-xs text-zinc-300 w-5 text-right">{String(i + 1).padStart(2, "0")}</span>
                   <span className="font-semibold text-black text-sm group-hover:underline">{client.name}</span>
                 </div>
-                <div className="col-span-2">
+                <div className="col-span-3">
                   <span className={`text-xs font-medium px-2 py-0.5 rounded border ${client.source === "zoho" ? "border-blue-200 text-blue-600 bg-blue-50" : "border-purple-200 text-purple-600 bg-purple-50"}`}>
                     {client.source?.toUpperCase()}
                   </span>
                 </div>
-                <div className="col-span-1 text-right text-zinc-300 group-hover:text-black transition text-lg">→</div>
+                <div className="col-span-1 text-right text-zinc-300 group-hover:text-black transition">→</div>
               </button>
             ))}
           </div>
@@ -1375,27 +1229,21 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   );
 }
 
-// ============================================
-// ROOT
-// ============================================
-export default function Home() {
+// ─── Root ─────────────────────────────────────────────────────────────────────
+function HomeInner() {
   const [session, setSession] = useState<boolean | null>(null);
-
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(!!data.session));
-    const { data: listener } = supabase.auth.onAuthStateChange((_e, s) => setSession(!!s));
-    return () => listener.subscription.unsubscribe();
+    const { data: l } = supabase.auth.onAuthStateChange((_e, s) => setSession(!!s));
+    return () => l.subscription.unsubscribe();
   }, []);
+  if (session === null) return <div className="min-h-screen bg-white flex items-center justify-center"><p className="text-zinc-400 text-sm animate-pulse">Loading...</p></div>;
+  return session ? <Dashboard onLogout={() => setSession(false)} /> : <LoginScreen onLogin={() => setSession(true)} />;
+}
 
-  if (session === null) {
-    return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
-        <p className="text-zinc-500 text-sm">Loading...</p>
-      </div>
-    );
-  }
-
-  return session
-    ? <Dashboard onLogout={() => setSession(false)} />
-    : <LoginScreen onLogin={() => setSession(true)} />;
+export default function Home() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return <div className="min-h-screen bg-white flex items-center justify-center"><p className="text-zinc-400 text-sm animate-pulse">Loading...</p></div>;
+  return <HomeInner />;
 }

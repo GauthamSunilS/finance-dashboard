@@ -299,7 +299,7 @@ function AccountingModule({ orgId }: { orgId: string }) {
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-3">
               <Card label="Total Orders" value={String(d.length)} />
-              <Card label="Total Value" value={inr(d.reduce((s, i) => s + i.total, 0))} />
+              <Card label="Total Value" value={fmt(d.reduce((s, i) => s + i.total, 0), d[0]?.currency_code)} />
               <Card label="Confirmed" value={String(d.filter(s => s.status === "confirmed").length)} color="text-emerald-600" />
             </div>
             <Table cols={["SO #", "Customer", "Date", "Shipment", "Status", "Billed", "Total"]}
@@ -320,7 +320,7 @@ function AccountingModule({ orgId }: { orgId: string }) {
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-3">
               <Card label="Total Quotes" value={String(d.length)} />
-              <Card label="Total Value" value={inr(d.reduce((s, i) => s + i.total, 0))} />
+              <Card label="Total Value" value={fmt(d.reduce((s, i) => s + i.total, 0), d[0]?.currency_code)} />
               <Card label="Accepted" value={String(d.filter(e => e.status === "accepted").length)} color="text-emerald-600" />
             </div>
             <Table cols={["Estimate #", "Customer", "Date", "Expiry", "Status", "Total"]}
@@ -340,8 +340,8 @@ function AccountingModule({ orgId }: { orgId: string }) {
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-3">
               <Card label="Total Receipts" value={String(d.length)} />
-              <Card label="Total Received" value={inr(d.reduce((s, i) => s + i.amount, 0))} color="text-emerald-600" />
-              <Card label="Avg per Receipt" value={inr(d.length > 0 ? d.reduce((s, i) => s + i.amount, 0) / d.length : 0)} />
+              <Card label="Total Received" value={fmt(d.reduce((s, i) => s + i.amount, 0), d[0]?.currency_code)} color="text-emerald-600" />
+              <Card label="Avg per Receipt" value={fmt(d.length > 0 ? d.reduce((s, i) => s + i.amount, 0) / d.length : 0, d[0]?.currency_code)} />
             </div>
             <Table cols={["Receipt #", "Customer", "Date", "Mode", "Reference", "Amount"]}
               rows={d.map(p => [
@@ -386,7 +386,7 @@ function AccountingModule({ orgId }: { orgId: string }) {
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-3">
               <Card label="Total POs" value={String(d.length)} />
-              <Card label="Total Value" value={inr(d.reduce((s, i) => s + i.total, 0))} />
+              <Card label="Total Value" value={fmt(d.reduce((s, i) => s + i.total, 0), d[0]?.currency_code)} />
               <Card label="Unbilled" value={String(d.filter(p => p.billed_status === "none" || !p.billed_status).length)} color="text-amber-600" />
             </div>
             <Table cols={["PO #", "Vendor", "Date", "Status", "Billed", "GRN Status", "Total"]}
@@ -408,8 +408,8 @@ function AccountingModule({ orgId }: { orgId: string }) {
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-3">
               <Card label="Total Bills" value={String(d.length)} />
-              <Card label="Outstanding" value={inr(d.reduce((s, i) => s + i.balance, 0))} color="text-amber-600" />
-              <Card label="Total Value" value={inr(d.reduce((s, i) => s + i.total, 0))} />
+              <Card label="Outstanding" value={fmt(d.reduce((s, i) => s + i.balance, 0), d[0]?.currency_code)} color="text-amber-600" />
+              <Card label="Total Value" value={fmt(d.reduce((s, i) => s + i.total, 0), d[0]?.currency_code)} />
             </div>
             <Table cols={["Bill #", "Vendor", "Date", "Due", "Status", "Total", "Balance"]}
               rows={d.map(b => [
@@ -429,7 +429,7 @@ function AccountingModule({ orgId }: { orgId: string }) {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <Card label="Total Payments Made" value={String(d.length)} />
-              <Card label="Total Amount Paid" value={inr(d.reduce((s, i) => s + i.amount, 0))} color="text-red-600" />
+              <Card label="Total Amount Paid" value={fmt(d.reduce((s, i) => s + i.amount, 0), d[0]?.currency_code)} color="text-red-600" />
             </div>
             <Table cols={["Ref", "Vendor", "Date", "Mode", "Amount"]}
               rows={d.map(p => [

@@ -192,6 +192,87 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
   );
 }
 
+
+// ─── Journal Table (expandable) ──────────────────────────────────────────────
+function JournalTable({ journals }: { journals: Journal[] }) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+  if (journals.length === 0) return <div className="text-center py-10 text-zinc-400 text-sm bg-white border border-zinc-200 rounded-xl">No journal entries — sync from Zoho</div>;
+  return (
+    <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden shadow-sm">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-zinc-200 bg-zinc-50">
+              <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Entry #</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Date</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide w-1/3">Ledger Accounts</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide w-1/4">Notes</th>
+              <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Total</th>
+              <th className="px-4 py-3 w-8"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {journals.map((j) => {
+              const isOpen = expanded === j.id;
+              let lines: any[] = [];
+              try { lines = JSON.parse(j.line_items || "[]"); } catch {}
+              const ledgerPreview = lines.length > 0
+                ? lines.map((l: any) => l.account_name || l.account || "").filter(Boolean).join(" · ")
+                : "—";
+              return (
+                <>
+                  <tr key={j.id}
+                    onClick={() => setExpanded(isOpen ? null : j.id)}
+                    className="border-b border-zinc-100 hover:bg-zinc-50 cursor-pointer">
+                    <td className="px-4 py-3 font-mono text-xs text-zinc-500">{j.entry_number || j.id.slice(-8)}</td>
+                    <td className="px-4 py-3 text-zinc-600 whitespace-nowrap">{fdate(j.journal_date)}</td>
+                    <td className="px-4 py-3 text-zinc-700 text-xs">{isOpen ? ledgerPreview : ledgerPreview.length > 60 ? ledgerPreview.slice(0, 60) + "…" : ledgerPreview}</td>
+                    <td className="px-4 py-3 text-zinc-400 text-xs">{j.notes ? (j.notes.length > 40 ? j.notes.slice(0, 40) + "…" : j.notes) : "—"}</td>
+                    <td className="px-4 py-3 text-right font-semibold text-zinc-900">{inr(j.total)}</td>
+                    <td className="px-4 py-3 text-zinc-400 text-xs select-none">{isOpen ? "▲" : "▼"}</td>
+                  </tr>
+                  {isOpen && (
+                    <tr key={j.id + "-detail"} className="border-b border-zinc-100 bg-zinc-50">
+                      <td colSpan={6} className="px-6 py-4">
+                        <div className="space-y-3">
+                          {j.notes && <p className="text-xs text-zinc-500"><span className="font-semibold text-zinc-700">Notes: </span>{j.notes}</p>}
+                          {lines.length > 0 ? (
+                            <div>
+                              <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">Journal Lines</p>
+                              <table className="w-full text-xs border border-zinc-200 rounded-lg overflow-hidden">
+                                <thead>
+                                  <tr className="bg-zinc-100 border-b border-zinc-200">
+                                    <th className="text-left px-3 py-2 font-semibold text-zinc-500">Account</th>
+                                    <th className="text-right px-3 py-2 font-semibold text-zinc-500">Debit</th>
+                                    <th className="text-right px-3 py-2 font-semibold text-zinc-500">Credit</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {lines.map((line: any, i: number) => (
+                                    <tr key={i} className="border-b border-zinc-100 last:border-0">
+                                      <td className="px-3 py-2 text-zinc-700">{line.account_name || line.account || "—"}</td>
+                                      <td className="px-3 py-2 text-right text-emerald-600">{line.debit_or_credit === "debit" || line.debit ? inr(Number(line.amount || line.debit || 0)) : "—"}</td>
+                                      <td className="px-3 py-2 text-right text-red-600">{line.debit_or_credit === "credit" || line.credit ? inr(Number(line.amount || line.credit || 0)) : "—"}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : <p className="text-xs text-zinc-400">No line item details — re-sync to fetch ledger details</p>}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ─── Accounting Module ────────────────────────────────────────────────────────
 function AccountingModule({ orgId }: { orgId: string }) {
   const [section, setSection] = useState<AcctSection>("invoices");
@@ -455,25 +536,7 @@ function AccountingModule({ orgId }: { orgId: string }) {
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700">
               ⚠ Journal entries bypass automated TDS/GST checks. Each entry below is flagged for manual review in the Internal Audit module.
             </div>
-            <Table cols={["Entry #", "Date", "Type / Ledger", "Notes", "Total"]}
-              rows={d.map(j => {
-                // Parse line_items to show ledger names
-                let ledgers = "—";
-                try {
-                  const lines = JSON.parse(j.line_items || "[]");
-                  if (lines.length > 0) {
-                    ledgers = lines.slice(0, 2).map((l: any) => l.account_name || l.account || "").filter(Boolean).join(" / ");
-                    if (lines.length > 2) ledgers += ` +${lines.length - 2} more`;
-                  }
-                } catch {}
-                return [
-                  <span className="font-mono text-xs text-zinc-500">{j.entry_number || j.id.slice(-8)}</span>,
-                  fdate(j.journal_date),
-                  <span className="text-xs text-zinc-600 max-w-[160px] truncate block">{ledgers}</span>,
-                  <span className="text-xs text-zinc-400 max-w-[200px] truncate block">{j.notes || "—"}</span>,
-                  <span className="font-semibold">{inr(j.total)}</span>,
-                ];
-              })} empty="No journal entries — sync from Zoho" />
+            <JournalTable journals={d} />
           </div>
         );
       })()}

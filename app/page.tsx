@@ -109,16 +109,21 @@ function Table({ cols, rows, empty = "No data" }: { cols: string[]; rows: React.
 }
 
 // ─── TDS Rules ────────────────────────────────────────────────────────────────
-const TDS: { sec: string; label: string; kw: string[]; min: number; rate: number }[] = [
-  { sec: "194C", label: "194C – Contractors", kw: ["contractor","construction","transport","courier","logistics","freight","security","catering","cleaning","labour","manpower","event","fabrication"], min: 30000, rate: 2 },
-  { sec: "194J", label: "194J – Professional", kw: ["consultant","consulting","professional","legal","advocate","chartered","software","it service","technology","designer","freelancer","saas","advisory","audit"], min: 30000, rate: 10 },
-  { sec: "194H", label: "194H – Commission", kw: ["commission","brokerage","referral fee","agent fee","dealer commission"], min: 15000, rate: 5 },
-  { sec: "194I", label: "194I – Rent", kw: ["rent","lease","rental","property management","office space","premises","godown"], min: 50000, rate: 10 },
-  { sec: "194A", label: "194A – Interest", kw: ["interest paid","loan interest","bank charges","finance charges"], min: 5000, rate: 10 },
+const TDS: { sec: string; label: string; kw: string[]; excludeKw: string[]; min: number; rate: number }[] = [
+  { sec: "194C", label: "194C – Contractors", kw: ["contractor","construction","transport","courier","logistics","freight","security","catering","cleaning","labour","manpower","event","fabrication","printing","repair","maintenance"], excludeKw: ["software","subscription","saas","cloud"], min: 30000, rate: 2 },
+  { sec: "194J", label: "194J – Professional", kw: ["consultant","consulting","professional","legal","advocate","chartered","software","it service","technology","designer","freelancer","saas","advisory","audit fees","technical","dues & subscription","subscription","cloud"], excludeKw: ["bank","hardware","material"], min: 30000, rate: 10 },
+  { sec: "194H", label: "194H – Commission", kw: ["commission","brokerage","referral fee","agent fee","dealer commission"], excludeKw: [], min: 15000, rate: 5 },
+  { sec: "194I", label: "194I – Rent", kw: ["rent","lease","rental","property management","office space","premises","godown","warehouse"], excludeKw: [], min: 50000, rate: 10 },
+  { sec: "194A", label: "194A – Interest", kw: ["interest paid","loan interest","interest on loan","interest expense","interest charges"], excludeKw: ["bank charges","service charge","processing fee","gst","tax"], min: 5000, rate: 10 },
 ];
 function inferTds(vendor: string, account: string, amount: number) {
   const t = `${vendor} ${account}`.toLowerCase();
-  for (const r of TDS) { if (r.kw.some(k => t.includes(k)) && amount >= r.min) return r; }
+  // Skip known non-TDS accounts
+  const skip = ["bank charges","bank fee","bank service","gst","tax","petty cash","salary advance","reimbursement","travel expense","conveyance","postage","stationery","printing","office supplies"];
+  if (skip.some(s => t.includes(s))) return null;
+  for (const r of TDS) {
+    if (r.kw.some(k => t.includes(k)) && !r.excludeKw.some(k => t.includes(k)) && amount >= r.min) return r;
+  }
   return null;
 }
 const BLOCKED_ITC = ["food","canteen","catering","caterer","staff welfare","restaurant","meal","lunch","dinner","club membership","gym","personal","car hire","cab","taxi"];
@@ -931,6 +936,153 @@ function AccountingModule({ orgId, initSection = "" }: { orgId: string; initSect
   );
 }
 
+
+// ─── Editable TDS Table ───────────────────────────────────────────────────────
+function EditableTDSTable({ items, orgId }: { items: { exp: Expense; rule: typeof TDS[0]; expectedTds: number }[]; orgId: string }) {
+  // Local overrides: { [expId]: { sec: string; rate: number; tds: number; excluded: boolean; note: string } }
+  const [overrides, setOverrides] = useState<Record<string, { sec: string; rate: number; tds: number; excluded: boolean; note: string }>>({});
+  const [editing, setEditing] = useState<string | null>(null);
+
+  function getRow(item: typeof items[0]) {
+    const o = overrides[item.exp.id];
+    return {
+      sec: o?.sec ?? item.rule.sec,
+      rate: o?.rate ?? item.rule.rate,
+      tds: o?.tds ?? item.expectedTds,
+      excluded: o?.excluded ?? false,
+      note: o?.note ?? "",
+    };
+  }
+
+  function updateOverride(id: string, field: string, value: any) {
+    setOverrides(prev => {
+      const existing = prev[id] || {};
+      const updated = { ...existing, [field]: value };
+      // Recalculate TDS if rate changes
+      if (field === "rate") {
+        const item = items.find(i => i.exp.id === id);
+        if (item) updated.tds = Math.round(item.exp.total * Number(value) / 100);
+      }
+      return { ...prev, [id]: updated };
+    });
+  }
+
+  const visibleItems = items.filter(i => !getRow(i).excluded);
+  const totalTds = visibleItems.reduce((s, i) => s + getRow(i).tds, 0);
+  const excludedCount = items.filter(i => getRow(i).excluded).length;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Transaction Detail — Editable</p>
+        <div className="flex items-center gap-3">
+          {excludedCount > 0 && <span className="text-xs text-zinc-400">{excludedCount} excluded</span>}
+          <span className="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded font-bold">Total TDS: {inr(totalTds)}</span>
+        </div>
+      </div>
+      <div className="text-xs text-zinc-400 bg-zinc-50 border border-zinc-200 rounded-lg px-3 py-2">
+        ✏ Click any row to edit TDS section, rate, or amount. Check "Exclude" to remove from TDS computation (e.g. bank charges incorrectly inferred).
+      </div>
+      <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-zinc-200 bg-zinc-50">
+                <th className="text-left px-3 py-3 text-xs font-semibold text-zinc-500 uppercase">Date</th>
+                <th className="text-left px-3 py-3 text-xs font-semibold text-zinc-500 uppercase">Vendor</th>
+                <th className="text-left px-3 py-3 text-xs font-semibold text-zinc-500 uppercase">Account</th>
+                <th className="text-left px-3 py-3 text-xs font-semibold text-zinc-500 uppercase">FY</th>
+                <th className="text-right px-3 py-3 text-xs font-semibold text-zinc-500 uppercase">Amount</th>
+                <th className="text-center px-3 py-3 text-xs font-semibold text-zinc-500 uppercase">Section</th>
+                <th className="text-right px-3 py-3 text-xs font-semibold text-zinc-500 uppercase">Rate %</th>
+                <th className="text-right px-3 py-3 text-xs font-semibold text-zinc-500 uppercase">TDS ₹</th>
+                <th className="text-center px-3 py-3 text-xs font-semibold text-zinc-500 uppercase">Exclude</th>
+                <th className="text-left px-3 py-3 text-xs font-semibold text-zinc-500 uppercase">Note</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => {
+                const row = getRow(item);
+                const isEditing = editing === item.exp.id;
+                const isOverridden = !!overrides[item.exp.id];
+                return (
+                  <tr key={item.exp.id}
+                    className={`border-b border-zinc-100 last:border-0 ${row.excluded ? "opacity-40 bg-zinc-50" : "hover:bg-zinc-50"} ${isOverridden ? "bg-amber-50/30" : ""}`}>
+                    <td className="px-3 py-2.5 text-zinc-600 whitespace-nowrap text-xs">{fdate(item.exp.date)}</td>
+                    <td className="px-3 py-2.5 text-zinc-700 text-xs max-w-[120px] truncate">{item.exp.vendor_name || "—"}</td>
+                    <td className="px-3 py-2.5 text-zinc-500 text-xs max-w-[120px] truncate">{item.exp.account_name || "—"}</td>
+                    <td className="px-3 py-2.5 text-zinc-400 text-xs whitespace-nowrap">{getFY(item.exp.date || "")}</td>
+                    <td className="px-3 py-2.5 text-right text-zinc-700 text-xs">{inr(item.exp.total)}</td>
+                    <td className="px-3 py-2.5 text-center">
+                      {isEditing ? (
+                        <select value={row.sec} onChange={e => updateOverride(item.exp.id, "sec", e.target.value)}
+                          className="text-xs border border-zinc-200 rounded px-1 py-0.5 focus:outline-none focus:border-violet-500 bg-white">
+                          {TDS.map(r => <option key={r.sec} value={r.sec}>{r.sec}</option>)}
+                          <option value="NONE">None</option>
+                        </select>
+                      ) : (
+                        <span className={`text-xs font-mono font-bold px-1.5 py-0.5 rounded ${isOverridden ? "bg-amber-100 text-amber-700" : "bg-violet-100 text-violet-700"}`}
+                          onClick={() => setEditing(item.exp.id)}>{row.sec}</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5 text-right">
+                      {isEditing ? (
+                        <input type="number" value={row.rate} onChange={e => updateOverride(item.exp.id, "rate", Number(e.target.value))}
+                          className="w-14 text-xs border border-zinc-200 rounded px-1 py-0.5 text-right focus:outline-none focus:border-violet-500" />
+                      ) : (
+                        <span className="text-xs text-zinc-600 cursor-pointer" onClick={() => setEditing(item.exp.id)}>{row.rate}%</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5 text-right">
+                      {isEditing ? (
+                        <input type="number" value={row.tds} onChange={e => updateOverride(item.exp.id, "tds", Number(e.target.value))}
+                          className="w-20 text-xs border border-zinc-200 rounded px-1 py-0.5 text-right focus:outline-none focus:border-violet-500" />
+                      ) : (
+                        <span className={`text-xs font-bold cursor-pointer ${isOverridden ? "text-amber-600" : "text-violet-600"}`}
+                          onClick={() => setEditing(item.exp.id)}>{inr(row.tds)}</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5 text-center">
+                      <input type="checkbox" checked={row.excluded} onChange={e => updateOverride(item.exp.id, "excluded", e.target.checked)}
+                        className="w-3.5 h-3.5 accent-red-500 cursor-pointer" />
+                    </td>
+                    <td className="px-3 py-2.5">
+                      {isEditing ? (
+                        <div className="flex gap-1">
+                          <input value={row.note} onChange={e => updateOverride(item.exp.id, "note", e.target.value)}
+                            placeholder="Reason for override..." className="text-xs border border-zinc-200 rounded px-2 py-0.5 focus:outline-none w-32" />
+                          <button onClick={() => setEditing(null)} className="text-xs bg-black text-white px-2 py-0.5 rounded">✓</button>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-zinc-400 cursor-pointer italic" onClick={() => setEditing(item.exp.id)}>
+                          {row.note || (isOverridden ? "Modified" : "click to edit")}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-zinc-300 bg-zinc-50 font-bold">
+                <td colSpan={7} className="px-3 py-2.5 text-sm">Total (after exclusions)</td>
+                <td className="px-3 py-2.5 text-right text-violet-700 text-sm font-bold">{inr(totalTds)}</td>
+                <td colSpan={2}></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+      {Object.keys(overrides).length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center justify-between">
+          <p className="text-xs text-amber-700 font-medium">⚠ {Object.keys(overrides).length} override(s) applied. These are local only — not saved to Zoho.</p>
+          <button onClick={() => setOverrides({})} className="text-xs text-amber-700 hover:text-amber-900 underline">Reset all</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Internal Audit Module ────────────────────────────────────────────────────
 function AuditModule({ orgId, initSection = "" }: { orgId: string; initSection?: string }) {
   const [section, setSection] = useState<AuditSection>(() => {
@@ -1432,20 +1584,8 @@ function AuditModule({ orgId, initSection = "" }: { orgId: string; initSection?:
                 })} empty="No TDS liability found" />
             </div>
 
-            {/* Transaction detail */}
-            <div>
-              <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">Transaction Detail</p>
-              <Table cols={["Vendor", "Account", "Date", "FY", "Amount", "Section", "TDS Due"]}
-                rows={tdsItems.map(t => [
-                  t.exp.vendor_name || "—",
-                  <span className="text-xs">{t.exp.account_name || "—"}</span>,
-                  fdate(t.exp.date),
-                  <span className="text-xs text-zinc-400">{getFY(t.exp.date || "")}</span>,
-                  inr(t.exp.total),
-                  <span className="text-xs font-mono font-bold text-violet-700">{t.rule.sec}</span>,
-                  <span className="font-bold text-violet-600">{inr(t.expectedTds)}</span>,
-                ])} />
-            </div>
+            {/* Editable Transaction Detail */}
+            <EditableTDSTable items={tdsItems} orgId={orgId} />
           </div>
         );
       })()}

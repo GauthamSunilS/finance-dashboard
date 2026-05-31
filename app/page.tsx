@@ -110,11 +110,11 @@ function Table({ cols, rows, empty = "No data" }: { cols: string[]; rows: React.
 
 // ─── TDS Rules ────────────────────────────────────────────────────────────────
 const TDS: { sec: string; label: string; kw: string[]; excludeKw: string[]; min: number; rate: number }[] = [
-  { sec: "194C", label: "194C – Contractors", kw: ["contractor","construction","transport","courier","logistics","freight","security","catering","cleaning","labour","manpower","event","fabrication","printing","repair","maintenance","video edit","editing","creative","production","animation","motion"], excludeKw: ["software","subscription","saas","cloud"], min: 30000, rate: 2 },
-  { sec: "194J", label: "194J – Professional", kw: ["consultant","consulting","professional","legal","advocate","chartered","software","it service","technology","designer","freelancer","saas","advisory","audit fees","technical","dues & subscription","subscription","cloud"], excludeKw: ["bank","hardware","material"], min: 30000, rate: 10 },
-  { sec: "194H", label: "194H – Commission", kw: ["commission","brokerage","referral fee","agent fee","dealer commission"], excludeKw: [], min: 15000, rate: 5 },
-  { sec: "194I", label: "194I – Rent", kw: ["rent","lease","rental","property management","office space","premises","godown","warehouse"], excludeKw: ["bank charges","bank fee"], min: 50000, rate: 10 },
-  { sec: "194A", label: "194A – Interest", kw: ["interest paid","loan interest","interest on loan","interest expense","interest charges"], excludeKw: ["bank charges","service charge","processing fee","gst","tax"], min: 5000, rate: 10 },
+  { sec: "194C", label: "194C – Contractors", kw: ["contractor","construction","transport","courier","logistics","freight","security","catering","cleaning","labour","manpower","event","fabrication","printing","repair","maintenance","video edit","video editing","editing","creative","production","animation","motion","studio"], excludeKw: ["software","subscription","saas","cloud"], min: 1, rate: 2 },
+  { sec: "194J", label: "194J – Professional", kw: ["consultant","consulting","professional","legal","advocate","chartered","software","it service","technology","designer","freelancer","saas","advisory","audit fees","technical","dues & subscription","subscription","cloud","digital marketing"], excludeKw: ["bank","hardware","material"], min: 1, rate: 10 },
+  { sec: "194H", label: "194H – Commission", kw: ["commission","brokerage","referral fee","agent fee","dealer commission"], excludeKw: [], min: 1, rate: 5 },
+  { sec: "194I", label: "194I – Rent", kw: ["rent","lease","rental","property management","office space","premises","godown","warehouse"], excludeKw: ["bank charges","bank fee"], min: 1, rate: 10 },
+  { sec: "194A", label: "194A – Interest", kw: ["interest paid","loan interest","interest on loan","interest expense","interest charges"], excludeKw: ["bank charges","service charge","processing fee","gst","tax"], min: 1, rate: 10 },
 ];
 function inferTds(vendor: string, account: string, amount: number) {
   const t = `${vendor} ${account}`.toLowerCase();
@@ -1107,6 +1107,7 @@ function LedgerTDSTracker({ expenses, bills, vendorPayments, journals, orgId }: 
   const [saved, setSaved] = React.useState(false);
 
   React.useEffect(() => {
+    // Only load once on mount
     supabase.from("pending_changes").select("*").eq("org_id", orgId).eq("module", "tds_ledger").then(({ data: sv }) => {
       const savedMap: Record<string, any> = {};
       for (const s of (sv || [])) savedMap[s.record_id || ""] = s.payload;
@@ -1133,14 +1134,11 @@ function LedgerTDSTracker({ expenses, bills, vendorPayments, journals, orgId }: 
       setRows([...billRows, ...expRows]);
       setLoading(false);
     });
-  }, [orgId, bills.length, expenses.length]);
+  }, [orgId]);
 
-  const save = async (id: string, source: string, updates: Partial<TDSTxnRow>) => {
+  const save = async (id: string, source: string, row: TDSTxnRow) => {
     const key = `txn||${source}||${id}`;
-    const row = rows.find(r => r.id === id);
-    if (!row) return;
-    const payload = { ...row, ...updates };
-    await supabase.from("pending_changes").upsert({ org_id: orgId, module: "tds_ledger", action: "update", record_id: key, payload, status: "saved" }, { onConflict: "org_id,module,record_id" });
+    await supabase.from("pending_changes").upsert({ org_id: orgId, module: "tds_ledger", action: "update", record_id: key, payload: row, status: "saved" }, { onConflict: "org_id,module,record_id" });
     setSaved(true); setTimeout(() => setSaved(false), 1500);
   };
 
@@ -1151,7 +1149,7 @@ function LedgerTDSTracker({ expenses, bills, vendorPayments, journals, orgId }: 
       if (field === "rate") { u.tdsAmount = Math.round(r.amount * value / 100); u.manualTds = false; }
       if (field === "tdsAmount") u.manualTds = true;
       if (field === "tdsApplicable") { u.tdsAmount = value ? Math.round(r.amount * r.rate / 100) : 0; u.manualTds = false; }
-      save(id, r.source, u);
+      save(id, r.source, u);  // pass full updated row
       return u;
     }));
   };
@@ -2054,8 +2052,21 @@ function ComplianceModule({ orgId, clientName, initSection = "" }: { orgId: stri
   const totalSales = filtInvoices.reduce((s, i) => s + i.total, 0);
   const totalGstOutput = filtInvoices.reduce((s, i) => s + i.tax_total, 0);
   const totalGstInput = filtExpenses.filter(e => !isBlocked(e.account_name || "", e.vendor_name || "")).reduce((s, e) => s + (e.tax_total || 0), 0);
+  // Load saved TDS tracker data (from TDS Summary in Internal Audit)
+  const [savedTdsRows, setSavedTdsRows] = React.useState<any[]>([]);
+  React.useEffect(() => {
+    supabase.from("pending_changes").select("*").eq("org_id", orgId).eq("module", "tds_ledger").eq("status", "saved")
+      .then(({ data }) => setSavedTdsRows(data || []));
+  }, [orgId]);
+
+  // Use saved TDS data if available, else fall back to inference
+  const hasSavedData = savedTdsRows.length > 0;
+  const savedLiableRows = savedTdsRows.filter(r => r.payload?.tdsApplicable);
+  const totalTdsLiability = hasSavedData
+    ? savedLiableRows.reduce((s, r) => s + (r.payload?.tdsAmount || 0), 0)
+    : filtExpenses.reduce((s, e) => { const r = inferTds(e.vendor_name || "", e.account_name || "", e.total); return s + (r ? Math.round(e.total * r.rate / 100) : 0); }, 0);
   const tdsItems = filtExpenses.filter(e => inferTds(e.vendor_name || "", e.account_name || "", e.total));
-  const totalTdsLiability = tdsItems.reduce((s, e) => { const r = inferTds(e.vendor_name || "", e.account_name || "", e.total); return s + (r ? Math.round(e.total * r.rate / 100) : 0); }, 0);
+  const tdsItemCount = hasSavedData ? savedLiableRows.length : tdsItems.length;
   const overdueInvoices = filtInvoices.filter(i => i.balance > 0 && i.due_date && daysDiff(i.due_date) > 0);
   const missingIRN = filtInvoices.filter(i => i.total >= 500000 && !i.reference_number);
   const missingGSTIN = filtInvoices.filter(i => !i.gst_number && i.tax_total > 0);
@@ -2210,21 +2221,51 @@ function ComplianceModule({ orgId, clientName, initSection = "" }: { orgId: stri
               ))}
             </div>
           </div>
-          <Card label="Total TDS to Deduct & Deposit" value={inr(totalTdsLiability)} color="text-violet-600" sub={`${tdsItems.length} transactions liable`} />
-          <Table cols={["Section", "Vendor", "Account", "Expense", "Rate", "TDS Due", "Deposit By"]}
-            rows={tdsItems.map(e => {
-              const rule = inferTds(e.vendor_name || "", e.account_name || "", e.total)!;
-              const tds = Math.round(e.total * rule.rate / 100);
-              const d = new Date(e.date);
-              const dueDate = d.getMonth() === 2 ? "30 Apr" : new Date(d.getFullYear(), d.getMonth() + 1, 7).toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
-              return [
-                <span className="font-mono text-xs font-bold text-violet-700">{rule.sec}</span>,
-                e.vendor_name || "—", <span className="text-xs">{e.account_name || "—"}</span>,
-                inr(e.total), `${rule.rate}%`,
-                <span className="font-bold text-violet-600">{inr(tds)}</span>,
-                <span className="text-xs font-medium text-zinc-500">{dueDate}</span>,
-              ];
-            })} empty="No TDS liability found" />
+          <Card label="Total TDS to Deduct & Deposit" value={inr(totalTdsLiability)} color="text-violet-600" sub={`${tdsItemCount} transactions liable`} />
+          {hasSavedData ? (
+            <>
+              <div className="bg-violet-50 border border-violet-200 rounded-xl p-3 text-xs text-violet-700">
+                ✓ Showing your saved TDS settings from TDS Summary. Update via <strong>Internal Audit → TDS Summary</strong>.
+              </div>
+              <Table cols={["Date", "Vendor", "Account", "Source", "Amount", "Section", "Rate", "TDS ₹", "PAN"]}
+                rows={savedLiableRows.map(r => {
+                  const p = r.payload;
+                  const d = new Date(p.date || "");
+                  const dueDate = d.getMonth() === 2 ? "30 Apr" : new Date(d.getFullYear(), d.getMonth() + 1, 7).toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+                  return [
+                    fdate(p.date),
+                    <span className="font-medium">{p.vendor || "—"}</span>,
+                    <span className="text-xs text-zinc-500">{p.account || "—"}</span>,
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold ${p.source==="Bill"?"bg-sky-50 text-sky-700 border-sky-200":"bg-emerald-50 text-emerald-700 border-emerald-200"}`}>{p.source}</span>,
+                    inr(p.amount),
+                    <span className="font-mono text-xs font-bold text-violet-700">{p.sec}</span>,
+                    `${p.rate}%`,
+                    <span className="font-bold text-violet-600">{inr(p.tdsAmount)}</span>,
+                    p.pan ? <span className="font-mono text-xs text-emerald-700">{p.pan}</span> : <span className="text-red-500 text-xs">⚠ Missing</span>,
+                  ];
+                })} empty="No TDS liability saved" />
+            </>
+          ) : (
+            <>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700">
+                ⚠ Using inferred TDS data. For accurate results, go to <strong>Internal Audit → TDS Summary</strong> and confirm each transaction.
+              </div>
+              <Table cols={["Section", "Vendor", "Account", "Expense", "Rate", "TDS Due", "Deposit By"]}
+                rows={tdsItems.map(e => {
+                  const rule = inferTds(e.vendor_name || "", e.account_name || "", e.total)!;
+                  const tds = Math.round(e.total * rule.rate / 100);
+                  const d = new Date(e.date);
+                  const dueDate = d.getMonth() === 2 ? "30 Apr" : new Date(d.getFullYear(), d.getMonth() + 1, 7).toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+                  return [
+                    <span className="font-mono text-xs font-bold text-violet-700">{rule.sec}</span>,
+                    e.vendor_name || "—", <span className="text-xs">{e.account_name || "—"}</span>,
+                    inr(e.total), `${rule.rate}%`,
+                    <span className="font-bold text-violet-600">{inr(tds)}</span>,
+                    <span className="text-xs font-medium text-zinc-500">{dueDate}</span>,
+                  ];
+                })} empty="No TDS liability found" />
+            </>
+          )}
         </div>
       )}
 

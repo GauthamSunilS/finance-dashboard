@@ -1770,17 +1770,17 @@ function ComplianceModule({ orgId, clientName }: { orgId: string; clientName: st
 
 // ─── Client Module ────────────────────────────────────────────────────────────
 function ClientModule({ client, onBack }: { client: Client; onBack: () => void }) {
-  const [module, setModule] = useState<Module>("accounting");
+  const getHashModule = (): Module => {
+    try {
+      const m = window.location.hash.replace("#", "").split("|")[1];
+      if (m === "audit" || m === "compliance") return m;
+    } catch {}
+    return "accounting";
+  };
+  const [module, setModule] = useState<Module>(getHashModule);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const orgId = client.org_id ?? client.id;
-
-  useEffect(() => {
-    try {
-      const m = window.location.hash.replace("#", "").split("|")[1];
-      if (m === "accounting" || m === "audit" || m === "compliance") setModule(m as Module);
-    } catch {}
-  }, []);
 
   async function handleSync() {
     setSyncing(true); setSyncMsg(null);

@@ -459,7 +459,7 @@ function ExpensesTab({ clientId }: { clientId: string }) {
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3">
         <SummaryCard label="Total Expenses" value={`${filtered.length}`} color="text-white" />
-        <SummaryCard label="Total Amount" value={fmt(total)} color="text-red-400" />
+        <SummaryCard label="Total Amount" value={fmt(total, data[0]?.currency_code || "INR")} color="text-red-400" />
       </div>
       <input value={search} onChange={e => setSearch(e.target.value)}
         placeholder="Search vendor or account..."
@@ -482,12 +482,12 @@ function ExpensesTab({ clientId }: { clientId: string }) {
                 <tr><td colSpan={6} className="text-center py-10 text-zinc-500">No data yet — sync from Zoho to populate</td></tr>
               ) : filtered.map((e, i) => (
                 <tr key={e.id} className={`border-b border-zinc-800/60 hover:bg-zinc-800/40 ${i % 2 === 0 ? "" : "bg-zinc-900/50"}`}>
-                  <td className="px-4 py-3 font-mono text-zinc-400 text-xs">{e.expense_number}</td>
+                  <td className="px-4 py-3 font-mono text-zinc-400 text-xs">{e.expense_number?.slice(-10) || "—"}</td>
                   <td className="px-4 py-3 text-zinc-300">{e.account_name}</td>
                   <td className="px-4 py-3 text-zinc-300">{e.vendor_name}</td>
                   <td className="px-4 py-3 text-zinc-400">{fmtDate(e.date)}</td>
                   <td className="px-4 py-3"><Badge status={e.status} /></td>
-                  <td className="px-4 py-3 text-right font-semibold text-red-400">{fmt(e.total, e.currency_code ?? "INR")}</td>
+                  <td className="px-4 py-3 text-right font-semibold text-red-400">{fmt(e.total, e.currency_code || "INR")}</td>
                 </tr>
               ))}
             </tbody>

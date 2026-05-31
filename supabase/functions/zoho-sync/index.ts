@@ -213,7 +213,7 @@ function mapExpense(e: any, orgId: string) {
     is_billable: e.is_billable || false,
     customer_id: e.customer_id || null,
     customer_name: e.customer_name || null,
-    currency_code: e.currency_code,
+    currency_code: e.currency_code || e.currency_id || "INR",
     reference_number: e.reference_number || null,
     description: e.description || null,
     report_name: e.report_name || null,

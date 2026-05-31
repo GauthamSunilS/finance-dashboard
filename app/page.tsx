@@ -1125,6 +1125,9 @@ function LedgerTDSTracker({ expenses, bills, journals, orgId, fyProp, quarterPro
   const [saving, setSaving] = React.useState<string | null>(null);
   const [savingAll, setSavingAll] = React.useState(false);
   const [saveMsg, setSaveMsg] = React.useState("");
+  const expKey = expenses.map(e => e.id).join(",");
+  const billKey = bills.map(b => b.id).join(",");
+  const jnlKey = journals.map(j => j.id).join(",");
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
 
   React.useEffect(() => {
@@ -1182,7 +1185,7 @@ function LedgerTDSTracker({ expenses, bills, journals, orgId, fyProp, quarterPro
         setRows([...bRows, ...eRows, ...jRows]);
         setLoading(false);
       });
-  }, [orgId, expenses.length, bills.length, journals.length, fyProp, quarterProp]);
+  }, [orgId, expKey, billKey, jnlKey]);
 
   const update = (id: string, field: string, value: any) => {
     setRows(prev => prev.map(r => {

@@ -1155,15 +1155,21 @@ function AuditModule({ orgId, initSection = "" }: { orgId: string; initSection?:
     if (inv.total >= 500000 && !inv.reference_number) findings.push({ id: `IRN-${inv.id}`, sev: "Critical", cat: "GST", party: inv.customer_name, ref: inv.invoice_number, date: inv.date, amount: inv.total, issue: `e-Invoice/IRN missing — ₹${(inv.total / 100000).toFixed(1)}L invoice`, detail: `Invoice ${inv.invoice_number} for ₹${inv.total.toLocaleString("en-IN")} has no IRN. Mandatory under e-invoicing threshold.`, action: "Generate IRN via IRP portal immediately. Invoice invalid for buyer ITC without IRN." });
   }
 
-  // TDS on expenses
-  for (const exp of fExpenses) {
+  // TDS on expenses + bills (combined)
+  const allTdsSources = [
+    ...fExpenses.map(e => ({ id: e.id, vendor: e.vendor_name||"", account: e.account_name||"", amount: e.total, date: e.date, ref: e.expense_number||e.id, source: "expense" })),
+    ...fBills.map(b => ({ id: "bill_"+b.id, vendor: b.vendor_name||"", account: b.vendor_name||"Bill", amount: b.total, date: b.date, ref: b.bill_number, source: "bill" })),
+  ];
+  for (const src of allTdsSources) {
+    const exp = { id: src.id, vendor_name: src.vendor, account_name: src.account, total: src.amount, date: src.date, expense_number: src.ref } as any;
     const rule = inferTds(exp.vendor_name || "", exp.account_name || "", exp.total);
     if (rule) {
       const expectedTds = Math.round(exp.total * rule.rate / 100);
       const dueDate = (() => { const d = new Date(exp.date); return d.getMonth() === 2 ? "30 Apr" : new Date(d.getFullYear(), d.getMonth() + 1, 7).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); })();
-      findings.push({ id: `TDS-${exp.id}`, sev: "Critical", cat: "TDS", party: exp.vendor_name || "Unknown", ref: exp.expense_number?.slice(-10) || exp.id, date: exp.date, amount: exp.total, issue: `TDS not deducted — ${rule.label} @${rule.rate}%`, detail: `Expense ₹${exp.total.toLocaleString("en-IN")} to "${exp.vendor_name}" under "${exp.account_name}". Expected TDS ₹${expectedTds.toLocaleString("en-IN")}. Due by ${dueDate}.`, action: `Deduct ₹${expectedTds.toLocaleString("en-IN")} u/s ${rule.sec}. Deposit by ${dueDate} via ITNS 281. File Form 26Q quarterly.` });
+      const srcLabel = src.source === "bill" ? "Bill" : "Expense";
+      findings.push({ id: `TDS-${exp.id}`, sev: "Critical", cat: "TDS", party: exp.vendor_name || "Unknown", ref: String(exp.expense_number || "").slice(-10) || exp.id, date: exp.date, amount: exp.total, issue: `TDS not deducted — ${rule.label} @${rule.rate}% (${srcLabel})`, detail: `${srcLabel} ₹${exp.total.toLocaleString("en-IN")} to "${exp.vendor_name}" under "${exp.account_name}". Expected TDS ₹${expectedTds.toLocaleString("en-IN")}. Due by ${dueDate}.`, action: `Deduct ₹${expectedTds.toLocaleString("en-IN")} u/s ${rule.sec}. Deposit by ${dueDate} via ITNS 281. File Form 26Q quarterly.` });
     }
-    if (isBlocked(exp.account_name || "", exp.vendor_name || "")) findings.push({ id: `ITC-${exp.id}`, sev: "Warning", cat: "GST", party: exp.vendor_name || "—", ref: exp.expense_number?.slice(-10) || exp.id, date: exp.date, amount: exp.total, issue: `ITC blocked u/s 17(5) — ${exp.account_name}`, detail: `"${exp.account_name}" is a blocked ITC category. GST ₹${exp.tax_total.toLocaleString("en-IN")} cannot be claimed.`, action: "Do not claim ITC in GSTR-3B. Reverse if already claimed — interest @24% p.a." });
+    if (isBlocked(exp.account_name || "", exp.vendor_name || "") && (exp as any).tax_total > 0) findings.push({ id: `ITC-${exp.id}`, sev: "Warning", cat: "GST", party: exp.vendor_name || "—", ref: String((exp as any).expense_number || "").slice(-10) || exp.id, date: exp.date, amount: exp.total, issue: `ITC blocked u/s 17(5) — ${exp.account_name}`, detail: `"${exp.account_name}" is a blocked ITC category. GST cannot be claimed.`, action: "Do not claim ITC in GSTR-3B. Reverse if already claimed — interest @24% p.a." });
   }
 
   // SO vs Payment 2-way mismatch
@@ -1492,7 +1498,55 @@ function AuditModule({ orgId, initSection = "" }: { orgId: string; initSection?:
       {/* TDS Summary */}
       {section === "tds" && (() => {
         const filtExp = filterByFYMonth(expenses, fy, month);
-        const tdsItems = filtExp.map(exp => {
+        const filtBills = filterByFYMonth(bills, fy, month);
+        const filtVP = filterByFYMonth(vendorPayments, fy, month);
+        const filtJrn = filterByFYMonth(journals, fy, month);
+
+        // Bills as TDS source
+        const billAsExp: Expense[] = filtBills.map(b => ({
+          id: "bill_"+b.id, expense_number: b.bill_number, account_name: b.vendor_name || "Bill",
+          vendor_name: b.vendor_name, status: b.status, date: b.date,
+          total: b.total, sub_total: b.total, tax_total: 0,
+          currency_code: b.currency_code, description: null, is_billable: false,
+          customer_name: null, paid_through_account_name: null, reference_number: null,
+        } as Expense));
+
+        // Vendor payments as TDS source
+        const vpAsExp: Expense[] = filtVP.map(vp => ({
+          id: "vp_"+vp.id, expense_number: vp.payment_number || vp.id, account_name: "Vendor Payment",
+          vendor_name: vp.vendor_name, status: "paid", date: vp.date,
+          total: vp.amount, sub_total: vp.amount, tax_total: 0,
+          currency_code: vp.currency_code, description: null, is_billable: false,
+          customer_name: null, paid_through_account_name: null, reference_number: null,
+        } as Expense));
+
+        // Journal debit lines as TDS source
+        const jrnAsExp: Expense[] = filtJrn.flatMap(j => {
+          try {
+            const lines = JSON.parse(j.line_items || "[]");
+            return lines
+              .filter((l: any) => (l.debit_or_credit === "debit" || Number(l.debit || 0) > 0) && Number(l.amount || l.debit || 0) > 0)
+              .map((l: any) => ({
+                id: "jrn_"+j.id+"_"+(l.account_name||""), expense_number: j.entry_number || j.id,
+                account_name: l.account_name || "", vendor_name: l.contact_name || l.customer_name || "",
+                status: "published", date: j.journal_date,
+                total: Number(l.amount || l.debit || 0), sub_total: Number(l.amount || l.debit || 0),
+                tax_total: 0, currency_code: j.currency_code || "INR",
+                description: j.notes, is_billable: false,
+                customer_name: null, paid_through_account_name: null, reference_number: null,
+              } as Expense));
+          } catch { return []; }
+        });
+
+        // Combine all sources - deduplicate by vendor+amount+date
+        const seen = new Set<string>();
+        const allSources = [...filtExp, ...billAsExp, ...vpAsExp, ...jrnAsExp].filter(e => {
+          const key = `${e.vendor_name}|${e.total}|${e.date}|${e.account_name}`;
+          if (seen.has(key)) return false;
+          seen.add(key); return true;
+        });
+
+        const tdsItems = allSources.map(exp => {
           const rule = inferTds(exp.vendor_name || "", exp.account_name || "", exp.total);
           if (!rule) return null;
           return { exp, rule, expectedTds: Math.round(exp.total * rule.rate / 100) };

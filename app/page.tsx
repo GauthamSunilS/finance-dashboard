@@ -595,14 +595,14 @@ function JournalTable({ journals, onEdit, onDelete }: { journals: Journal[]; onE
 
 // ─── Accounting Module ────────────────────────────────────────────────────────
 function AccountingModule({ orgId }: { orgId: string }) {
-  const [section, setSection] = useState<AcctSection>("invoices");
-  useEffect(() => {
+  const [section, setSection] = useState<AcctSection>(() => {
     try {
       const s = window.location.hash.replace("#","").split("|")[2];
       const valid = ["invoices","sales_orders","estimates","payments","expenses","purchases","bills","vendor_payments","journals"];
-      if (s && valid.includes(s)) setSection(s as AcctSection);
+      if (s && valid.includes(s)) return s as AcctSection;
     } catch {}
-  }, []);
+    return "invoices";
+  });
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
   const [estimates, setEstimates] = useState<Estimate[]>([]);
@@ -926,14 +926,14 @@ function AccountingModule({ orgId }: { orgId: string }) {
 
 // ─── Internal Audit Module ────────────────────────────────────────────────────
 function AuditModule({ orgId }: { orgId: string }) {
-  const [section, setSection] = useState<AuditSection>("overview");
-  useEffect(() => {
+  const [section, setSection] = useState<AuditSection>(() => {
     try {
       const s = window.location.hash.replace("#","").split("|")[2];
       const valid = ["overview","customers","so_match","po_match","gst","tds","findings"];
-      if (s && valid.includes(s)) setSection(s as AuditSection);
+      if (s && valid.includes(s)) return s as AuditSection;
     } catch {}
-  }, []);
+    return "overview";
+  });
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -1491,14 +1491,14 @@ function AuditModule({ orgId }: { orgId: string }) {
 
 // ─── Compliance Module ────────────────────────────────────────────────────────
 function ComplianceModule({ orgId, clientName }: { orgId: string; clientName: string }) {
-  const [section, setSection] = useState<CompSection>("summary");
-  useEffect(() => {
+  const [section, setSection] = useState<CompSection>(() => {
     try {
       const s = window.location.hash.replace("#","").split("|")[2];
       const valid = ["summary","gst_filing","tds_filing","pt_pf","it_filing"];
-      if (s && valid.includes(s)) setSection(s as CompSection);
+      if (s && valid.includes(s)) return s as CompSection;
     } catch {}
-  }, []);
+    return "summary";
+  });
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);

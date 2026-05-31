@@ -98,6 +98,66 @@ function inferTds(vendor: string, account: string, amount: number) {
 const BLOCKED_ITC = ["food","canteen","catering","caterer","staff welfare","restaurant","meal","lunch","dinner","club membership","gym","personal","car hire","cab","taxi"];
 function isBlocked(account: string, vendor: string) { return BLOCKED_ITC.some(k => `${account} ${vendor}`.toLowerCase().includes(k)); }
 
+
+// ─── FY / Month Helpers ───────────────────────────────────────────────────────
+function getFY(date: string): string {
+  if (!date) return "Unknown";
+  const d = new Date(date);
+  const year = d.getFullYear();
+  const month = d.getMonth(); // 0-based, April = 3
+  return month >= 3 ? `FY ${year}-${String(year + 1).slice(2)}` : `FY ${year - 1}-${String(year).slice(2)}`;
+}
+
+function getAvailableFYs(dates: string[]): string[] {
+  const fys = new Set(dates.filter(Boolean).map(getFY));
+  return ["All", ...Array.from(fys).sort().reverse()];
+}
+
+function getAvailableMonths(dates: string[], fy: string): string[] {
+  const filtered = fy === "All" ? dates : dates.filter(d => getFY(d) === fy);
+  const months = new Set(filtered.filter(Boolean).map(d => d.slice(0, 7)));
+  return ["All", ...Array.from(months).sort().reverse()];
+}
+
+function filterByFYMonth<T extends { date?: string; journal_date?: string }>(
+  items: T[], fy: string, month: string
+): T[] {
+  return items.filter(item => {
+    const d = (item as any).date || (item as any).journal_date || "";
+    if (fy !== "All" && getFY(d) !== fy) return false;
+    if (month !== "All" && !d.startsWith(month)) return false;
+    return true;
+  });
+}
+
+function FYMonthFilter({ dates, fy, month, onFY, onMonth }: {
+  dates: string[]; fy: string; month: string;
+  onFY: (v: string) => void; onMonth: (v: string) => void;
+}) {
+  const fys = getAvailableFYs(dates);
+  const months = getAvailableMonths(dates, fy);
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <span className="text-xs text-zinc-400 font-medium">FY:</span>
+      <select value={fy} onChange={e => { onFY(e.target.value); onMonth("All"); }}
+        className="text-xs border border-zinc-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-black bg-white">
+        {fys.map(f => <option key={f} value={f}>{f}</option>)}
+      </select>
+      <span className="text-xs text-zinc-400 font-medium">Month:</span>
+      <select value={month} onChange={e => onMonth(e.target.value)}
+        className="text-xs border border-zinc-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-black bg-white">
+        {months.map(m => <option key={m} value={m}>{m === "All" ? "All Months" : new Date(m + "-01").toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</option>)}
+      </select>
+      {(fy !== "All" || month !== "All") && (
+        <button onClick={() => { onFY("All"); onMonth("All"); }}
+          className="text-xs text-zinc-400 hover:text-black px-2 py-1 rounded border border-zinc-200 hover:border-zinc-400 transition">
+          Clear
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ─── Login ────────────────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }: { onLogin: () => void }) {
   const [email, setEmail] = useState(""); const [password, setPassword] = useState("");
@@ -146,6 +206,8 @@ function AccountingModule({ orgId }: { orgId: string }) {
   const [journals, setJournals] = useState<Journal[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [fy, setFy] = useState("All");
+  const [month, setMonth] = useState("All");
 
   useEffect(() => {
     Promise.all([
@@ -192,16 +254,21 @@ function AccountingModule({ orgId }: { orgId: string }) {
         ))}
       </div>
 
-      {/* Search */}
-      <div className="relative">
-        <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder={`Search ${section}...`}
-          className="w-full pl-9 pr-4 py-2 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-black transition" />
+      {/* Search + FY Filter */}
+      <div className="flex gap-2 flex-wrap items-center">
+        <div className="relative flex-1 min-w-[200px]">
+          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder={`Search ${section}...`}
+            className="w-full pl-9 pr-4 py-2 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-black transition" />
+        </div>
+        <FYMonthFilter
+          dates={[...invoices, ...salesOrders, ...estimates, ...payments, ...expenses, ...bills, ...purchaseOrders, ...vendorPayments].map((i: any) => i.date || i.journal_date || "")}
+          fy={fy} month={month} onFY={setFy} onMonth={setMonth} />
       </div>
 
       {/* INVOICES */}
       {section === "invoices" && (() => {
-        const d = invoices.filter(i => i.invoice_number?.toLowerCase().includes(search.toLowerCase()) || i.customer_name?.toLowerCase().includes(search.toLowerCase()));
+        const d = filterByFYMonth(invoices, fy, month).filter(i => i.invoice_number?.toLowerCase().includes(search.toLowerCase()) || i.customer_name?.toLowerCase().includes(search.toLowerCase()));
         const total = d.reduce((s, i) => s + i.total, 0); const balance = d.reduce((s, i) => s + i.balance, 0); const gst = d.reduce((s, i) => s + i.tax_total, 0);
         return (
           <div className="space-y-4">
@@ -227,7 +294,7 @@ function AccountingModule({ orgId }: { orgId: string }) {
 
       {/* SALES ORDERS */}
       {section === "sales_orders" && (() => {
-        const d = salesOrders.filter(s => s.salesorder_number?.toLowerCase().includes(search.toLowerCase()) || s.customer_name?.toLowerCase().includes(search.toLowerCase()));
+        const d = filterByFYMonth(salesOrders, fy, month).filter(s => s.salesorder_number?.toLowerCase().includes(search.toLowerCase()) || s.customer_name?.toLowerCase().includes(search.toLowerCase()));
         return (
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-3">
@@ -248,7 +315,7 @@ function AccountingModule({ orgId }: { orgId: string }) {
 
       {/* ESTIMATES */}
       {section === "estimates" && (() => {
-        const d = estimates.filter(e => e.estimate_number?.toLowerCase().includes(search.toLowerCase()) || e.customer_name?.toLowerCase().includes(search.toLowerCase()));
+        const d = filterByFYMonth(estimates, fy, month).filter(e => e.estimate_number?.toLowerCase().includes(search.toLowerCase()) || e.customer_name?.toLowerCase().includes(search.toLowerCase()));
         return (
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-3">
@@ -268,7 +335,7 @@ function AccountingModule({ orgId }: { orgId: string }) {
 
       {/* PAYMENTS / RECEIPTS */}
       {section === "payments" && (() => {
-        const d = payments.filter(p => p.payment_number?.toLowerCase().includes(search.toLowerCase()) || p.customer_name?.toLowerCase().includes(search.toLowerCase()));
+        const d = filterByFYMonth(payments, fy, month).filter(p => p.payment_number?.toLowerCase().includes(search.toLowerCase()) || p.customer_name?.toLowerCase().includes(search.toLowerCase()));
         return (
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-3">
@@ -290,7 +357,7 @@ function AccountingModule({ orgId }: { orgId: string }) {
 
       {/* EXPENSES */}
       {section === "expenses" && (() => {
-        const d = expenses.filter(e => (e.vendor_name || "").toLowerCase().includes(search.toLowerCase()) || (e.account_name || "").toLowerCase().includes(search.toLowerCase()));
+        const d = filterByFYMonth(expenses, fy, month).filter(e => (e.vendor_name || "").toLowerCase().includes(search.toLowerCase()) || (e.account_name || "").toLowerCase().includes(search.toLowerCase()));
         const total = d.reduce((s, e) => s + e.total, 0); const gst = d.reduce((s, e) => s + (e.tax_total || 0), 0);
         return (
           <div className="space-y-4">
@@ -314,7 +381,7 @@ function AccountingModule({ orgId }: { orgId: string }) {
 
       {/* PURCHASE ORDERS */}
       {section === "purchases" && (() => {
-        const d = purchaseOrders.filter(p => p.purchaseorder_number?.toLowerCase().includes(search.toLowerCase()) || p.vendor_name?.toLowerCase().includes(search.toLowerCase()));
+        const d = filterByFYMonth(purchaseOrders, fy, month).filter(p => p.purchaseorder_number?.toLowerCase().includes(search.toLowerCase()) || p.vendor_name?.toLowerCase().includes(search.toLowerCase()));
         return (
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-3">
@@ -336,7 +403,7 @@ function AccountingModule({ orgId }: { orgId: string }) {
 
       {/* BILLS */}
       {section === "bills" && (() => {
-        const d = bills.filter(b => b.bill_number?.toLowerCase().includes(search.toLowerCase()) || b.vendor_name?.toLowerCase().includes(search.toLowerCase()));
+        const d = filterByFYMonth(bills, fy, month).filter(b => b.bill_number?.toLowerCase().includes(search.toLowerCase()) || b.vendor_name?.toLowerCase().includes(search.toLowerCase()));
         return (
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-3">
@@ -357,7 +424,7 @@ function AccountingModule({ orgId }: { orgId: string }) {
 
       {/* VENDOR PAYMENTS */}
       {section === "vendor_payments" && (() => {
-        const d = vendorPayments.filter(p => (p.vendor_name || "").toLowerCase().includes(search.toLowerCase()));
+        const d = filterByFYMonth(vendorPayments, fy, month).filter(p => (p.vendor_name || "").toLowerCase().includes(search.toLowerCase()));
         return (
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
@@ -377,7 +444,7 @@ function AccountingModule({ orgId }: { orgId: string }) {
 
       {/* JOURNALS */}
       {section === "journals" && (() => {
-        const d = journals.filter(j => (j.entry_number || "").toLowerCase().includes(search.toLowerCase()) || (j.notes || "").toLowerCase().includes(search.toLowerCase()));
+        const d = filterByFYMonth(journals, fy, month).filter(j => (j.entry_number || "").toLowerCase().includes(search.toLowerCase()) || (j.notes || "").toLowerCase().includes(search.toLowerCase()));
         return (
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
@@ -415,6 +482,8 @@ function AuditModule({ orgId }: { orgId: string }) {
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [monthFilter, setMonthFilter] = useState("");
+  const [fy, setFy] = useState("All");
+  const [month, setMonth] = useState("All");
 
   useEffect(() => {
     Promise.all([
@@ -437,11 +506,21 @@ function AuditModule({ orgId }: { orgId: string }) {
 
   // ── Findings engine ──
   type Finding = { id: string; sev: "Critical" | "Warning" | "Info"; cat: string; party: string; ref: string; date: string; amount: number; issue: string; detail: string; action: string };
+  // Apply FY/Month filter to all data
+  const fInvoices = filterByFYMonth(invoices, fy, month);
+  const fSalesOrders = filterByFYMonth(salesOrders, fy, month);
+  const fPayments = filterByFYMonth(payments, fy, month);
+  const fExpenses = filterByFYMonth(expenses, fy, month);
+  const fBills = filterByFYMonth(bills, fy, month);
+  const fPurchaseOrders = filterByFYMonth(purchaseOrders, fy, month);
+  const fVendorPayments = filterByFYMonth(vendorPayments, fy, month);
+  const fJournals = filterByFYMonth(journals, fy, month);
+
   const findings: Finding[] = [];
   const today = new Date();
 
   // Overdue invoices
-  for (const inv of invoices) {
+  for (const inv of fInvoices) {
     if (inv.balance > 0 && inv.due_date) {
       const days = daysDiff(inv.due_date);
       if (days > 0) findings.push({ id: `OD-${inv.id}`, sev: days > 90 ? "Critical" : days > 30 ? "Warning" : "Info", cat: "Collections", party: inv.customer_name, ref: inv.invoice_number, date: inv.date, amount: inv.balance, issue: `Overdue ${days}d — ₹${inv.balance.toLocaleString("en-IN")} unpaid`, detail: `Invoice ${inv.invoice_number} was due on ${inv.due_date}. Balance ₹${inv.balance.toLocaleString("en-IN")} of total ₹${inv.total.toLocaleString("en-IN")}.`, action: days > 90 ? "Issue legal notice. Consider bad debt provision u/s 36(1)(vii)." : days > 30 ? "Send formal demand letter with interest clause." : "Follow up for payment." });
@@ -449,17 +528,17 @@ function AuditModule({ orgId }: { orgId: string }) {
   }
 
   // Missing GSTIN on B2B invoices
-  for (const inv of invoices) {
+  for (const inv of fInvoices) {
     if (!inv.gst_number && inv.tax_total > 0) findings.push({ id: `GSTIN-${inv.id}`, sev: "Warning", cat: "GST", party: inv.customer_name, ref: inv.invoice_number, date: inv.date, amount: inv.total, issue: "B2B invoice — customer GSTIN missing", detail: `Invoice ${inv.invoice_number}: GST ₹${inv.tax_total.toLocaleString("en-IN")} charged but no GSTIN. GSTR-1 B2B table incomplete.`, action: "Collect GSTIN and update. Buyer loses ITC without GSTIN on invoice." });
   }
 
   // e-Invoice / IRN missing
-  for (const inv of invoices) {
+  for (const inv of fInvoices) {
     if (inv.total >= 500000 && !inv.reference_number) findings.push({ id: `IRN-${inv.id}`, sev: "Critical", cat: "GST", party: inv.customer_name, ref: inv.invoice_number, date: inv.date, amount: inv.total, issue: `e-Invoice/IRN missing — ₹${(inv.total / 100000).toFixed(1)}L invoice`, detail: `Invoice ${inv.invoice_number} for ₹${inv.total.toLocaleString("en-IN")} has no IRN. Mandatory under e-invoicing threshold.`, action: "Generate IRN via IRP portal immediately. Invoice invalid for buyer ITC without IRN." });
   }
 
   // TDS on expenses
-  for (const exp of expenses) {
+  for (const exp of fExpenses) {
     const rule = inferTds(exp.vendor_name || "", exp.account_name || "", exp.total);
     if (rule) {
       const expectedTds = Math.round(exp.total * rule.rate / 100);
@@ -471,10 +550,10 @@ function AuditModule({ orgId }: { orgId: string }) {
 
   // SO vs Payment 2-way mismatch
   const invByCust: Record<string, Invoice[]> = {}; const payByCust: Record<string, Payment[]> = {};
-  for (const i of invoices) { const k = (i.customer_name || "").toLowerCase(); (invByCust[k] = invByCust[k] || []).push(i); }
-  for (const p of payments) { const k = (p.customer_name || "").toLowerCase(); (payByCust[k] = payByCust[k] || []).push(p); }
+  for (const i of fInvoices) { const k = (i.customer_name || "").toLowerCase(); (invByCust[k] = invByCust[k] || []).push(i); }
+  for (const p of fPayments) { const k = (p.customer_name || "").toLowerCase(); (payByCust[k] = payByCust[k] || []).push(p); }
   const soSeen = new Set<string>();
-  for (const so of salesOrders) {
+  for (const so of fSalesOrders) {
     const k = (so.customer_name || "").toLowerCase();
     if (soSeen.has(k)) continue; soSeen.add(k);
     const totalPaid = (payByCust[k] || []).reduce((s, p) => s + p.amount, 0);
@@ -484,9 +563,9 @@ function AuditModule({ orgId }: { orgId: string }) {
   }
 
   // PO vs Bill vs Payment 3-way
-  for (const po of purchaseOrders) {
+  for (const po of fPurchaseOrders) {
     const linkedBills = bills.filter(b => b.purchaseorder_id === po.id);
-    const linkedPayments = vendorPayments.filter(vp => linkedBills.some(b => b.vendor_name === vp.vendor_name));
+    const linkedPayments = fVendorPayments.filter(vp => linkedBills.some(b => b.vendor_name === vp.vendor_name));
     const totalBilled = linkedBills.reduce((s, b) => s + b.total, 0);
     const totalPaid = linkedPayments.reduce((s, p) => s + p.amount, 0);
     if (totalPaid > 0 && linkedBills.length === 0) findings.push({ id: `PONOSUPPL-${po.id}`, sev: "Critical", cat: "Matching", party: po.vendor_name, ref: po.purchaseorder_number, date: po.date, amount: totalPaid, issue: `PO payment made — no bill accounted`, detail: `PO ${po.purchaseorder_number} ₹${po.total.toLocaleString("en-IN")}. Payment made but no bill recorded. GRN status: ${po.received_status || "unknown"}.`, action: "Book vendor bill immediately. Verify GRN. Without bill, expense is unverifiable." });
@@ -494,12 +573,12 @@ function AuditModule({ orgId }: { orgId: string }) {
   }
 
   // Journal entries flagged
-  for (const jrn of journals) {
+  for (const jrn of fJournals) {
     findings.push({ id: `JRN-${jrn.id}`, sev: "Info", cat: "Journal Override", party: "Journal Entry", ref: jrn.entry_number || jrn.id.slice(-8), date: jrn.journal_date, amount: jrn.total, issue: `Journal entry ₹${jrn.total.toLocaleString("en-IN")} — bypasses auto-checks`, detail: `Entry ${jrn.entry_number || jrn.id}: "${jrn.notes || "no notes"}". Manual entries bypass TDS/GST engine.`, action: "Review for TDS/GST applicability. Verify approvals and supporting documents." });
   }
 
   // Overdue bills payable
-  for (const bill of bills) {
+  for (const bill of fBills) {
     if (bill.balance > 0 && bill.due_date) {
       const days = daysDiff(bill.due_date);
       if (days > 0) findings.push({ id: `BILLOD-${bill.id}`, sev: days > 60 ? "Warning" : "Info", cat: "Payables", party: bill.vendor_name, ref: bill.bill_number, date: bill.date, amount: bill.balance, issue: `Vendor bill overdue ${days}d — ₹${bill.balance.toLocaleString("en-IN")} unpaid`, detail: `Bill ${bill.bill_number} from ${bill.vendor_name} due ${bill.due_date}. Balance ₹${bill.balance.toLocaleString("en-IN")}.`, action: "Process vendor payment. Check if vendor is MSME — 45-day rule under 43B(h) applies." });
@@ -507,6 +586,9 @@ function AuditModule({ orgId }: { orgId: string }) {
   }
 
   const sevCount = { Critical: findings.filter(f => f.sev === "Critical").length, Warning: findings.filter(f => f.sev === "Warning").length, Info: findings.filter(f => f.sev === "Info").length };
+  const totalRevenue = fInvoices.reduce((s, i) => s + i.total, 0);
+  const totalExpAmt = fExpenses.reduce((s, e) => s + e.total, 0);
+  const totalReceivedAmt = fPayments.reduce((s, p) => s + p.amount, 0);
   const sevStyle: Record<string, { border: string; bg: string; badge: string; text: string }> = {
     Critical: { border: "border-red-200", bg: "bg-red-50", badge: "bg-red-500 text-white", text: "text-red-700" },
     Warning: { border: "border-amber-200", bg: "bg-amber-50", badge: "bg-amber-400 text-black", text: "text-amber-700" },
@@ -533,9 +615,26 @@ function AuditModule({ orgId }: { orgId: string }) {
         ))}
       </div>
 
+      {/* FY / Month Filter */}
+      <FYMonthFilter
+        dates={[...invoices, ...expenses, ...salesOrders, ...payments, ...bills, ...purchaseOrders, ...vendorPayments].map((i: any) => i.date || "")}
+        fy={fy} month={month} onFY={v => { setFy(v); setMonth("All"); }} onMonth={setMonth} />
+
       {/* Overview */}
       {section === "overview" && (
         <div className="space-y-4">
+          {/* MIS Summary */}
+          <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-3">
+            <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wide mb-3">
+              MIS Summary {fy !== "All" ? `· ${fy}` : ""}{month !== "All" ? ` · ${new Date(month + "-01").toLocaleDateString("en-IN", { month: "long", year: "numeric" })}` : ""}
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <Card label="Total Revenue" value={inr(totalRevenue)} color="text-emerald-600" sub="Sales invoices" />
+              <Card label="Total Expenses" value={inr(totalExpAmt)} color="text-red-600" sub="All expenses" />
+              <Card label="Total Received" value={inr(totalReceivedAmt)} color="text-blue-600" sub="Customer payments" />
+              <Card label="Net Position" value={inr(totalRevenue - totalExpAmt)} color={totalRevenue - totalExpAmt >= 0 ? "text-emerald-600" : "text-red-600"} sub="Revenue − Expenses" />
+            </div>
+          </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Card label="Critical Issues" value={String(sevCount.Critical)} color="text-red-600" sub="Immediate action" />
             <Card label="Warnings" value={String(sevCount.Warning)} color="text-amber-600" sub="Review needed" />
@@ -544,9 +643,9 @@ function AuditModule({ orgId }: { orgId: string }) {
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Card label="Overdue Receivables" value={inr(findings.filter(f => f.cat === "Collections").reduce((s, f) => s + f.amount, 0))} color="text-red-600" />
-            <Card label="TDS Exposure" value={inr(expenses.reduce((s, e) => { const r = inferTds(e.vendor_name || "", e.account_name || "", e.total); return s + (r ? Math.round(e.total * r.rate / 100) : 0); }, 0))} color="text-violet-600" />
+            <Card label="TDS Exposure" value={inr(fExpenses.reduce((s, e) => { const r = inferTds(e.vendor_name || "", e.account_name || "", e.total); return s + (r ? Math.round(e.total * r.rate / 100) : 0); }, 0))} color="text-violet-600" />
             <Card label="Matching Gaps" value={String(findings.filter(f => f.cat === "Matching").length)} color="text-amber-600" />
-            <Card label="Journal Overrides" value={String(journals.length)} color="text-orange-600" />
+            <Card label="Journal Overrides" value={String(fJournals.length)} color="text-orange-600" />
           </div>
           <div className="bg-white border border-zinc-200 rounded-xl p-5">
             <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-4">Findings by Category</p>
@@ -574,12 +673,12 @@ function AuditModule({ orgId }: { orgId: string }) {
       {/* Customer Ledger */}
       {section === "customers" && (() => {
         const custMap: Record<string, { invoiced: number; received: number; outstanding: number; invCount: number; payCount: number }> = {};
-        for (const inv of invoices) {
+        for (const inv of fInvoices) {
           const k = inv.customer_name;
           if (!custMap[k]) custMap[k] = { invoiced: 0, received: 0, outstanding: 0, invCount: 0, payCount: 0 };
           custMap[k].invoiced += inv.total; custMap[k].outstanding += inv.balance; custMap[k].invCount++;
         }
-        for (const pay of payments) {
+        for (const pay of fPayments) {
           const k = pay.customer_name;
           if (!custMap[k]) custMap[k] = { invoiced: 0, received: 0, outstanding: 0, invCount: 0, payCount: 0 };
           custMap[k].received += pay.amount; custMap[k].payCount++;
@@ -655,7 +754,7 @@ function AuditModule({ orgId }: { orgId: string }) {
             <p>Flags: payment received with no invoice · payment exceeds invoiced amount · SO fully delivered but not invoiced</p>
           </div>
           <Table cols={["Customer", "SO #", "SO Value", "Invoiced", "Received", "Gap", "Status"]}
-            rows={salesOrders.map(so => {
+            rows={fSalesOrders.map(so => {
               const k = (so.customer_name || "").toLowerCase();
               const totalInvoiced = (invByCust[k] || []).reduce((s, i) => s + i.total, 0);
               const totalPaid = (payByCust[k] || []).reduce((s, p) => s + p.amount, 0);
@@ -678,7 +777,7 @@ function AuditModule({ orgId }: { orgId: string }) {
           </div>
           <Table cols={["Vendor", "PO #", "PO Value", "GRN", "Billed", "Bill Value", "Paid", "Status"]}
             rows={purchaseOrders.map(po => {
-              const linkedBills = bills.filter(b => b.purchaseorder_id === po.id || b.vendor_name === po.vendor_name);
+              const linkedBills = fBills.filter(b => b.purchaseorder_id === po.id || b.vendor_name === po.vendor_name);
               const totalBilled = linkedBills.reduce((s, b) => s + b.total, 0);
               const totalPaid = vendorPayments.filter(vp => vp.vendor_name === po.vendor_name).reduce((s, p) => s + p.amount, 0);
               const status = totalPaid > 0 && linkedBills.length === 0 ? <span className="text-xs font-bold text-red-600">⚠ Paid, No Bill</span> :
@@ -692,75 +791,195 @@ function AuditModule({ orgId }: { orgId: string }) {
 
       {/* GST Summary */}
       {section === "gst" && (() => {
-        const months: Record<string, { output: number; input: number; blocked: number; invoiceCount: number; expCount: number }> = {};
-        for (const inv of invoices) {
+        const filtInv = filterByFYMonth(invoices, fy, month);
+        const filtExp = filterByFYMonth(expenses, fy, month);
+        const monthData: Record<string, { output: number; input: number; blocked: number; b2b: number; b2c: number; invCount: number; expCount: number }> = {};
+        for (const inv of filtInv) {
           const m = inv.date?.slice(0, 7) || "unknown";
-          if (!months[m]) months[m] = { output: 0, input: 0, blocked: 0, invoiceCount: 0, expCount: 0 };
-          months[m].output += inv.tax_total; months[m].invoiceCount++;
+          if (!monthData[m]) monthData[m] = { output: 0, input: 0, blocked: 0, b2b: 0, b2c: 0, invCount: 0, expCount: 0 };
+          monthData[m].output += inv.tax_total;
+          if (inv.gst_number) monthData[m].b2b += inv.total; else monthData[m].b2c += inv.total;
+          monthData[m].invCount++;
         }
-        for (const exp of expenses) {
+        for (const exp of filtExp) {
           const m = exp.date?.slice(0, 7) || "unknown";
-          if (!months[m]) months[m] = { output: 0, input: 0, blocked: 0, invoiceCount: 0, expCount: 0 };
-          if (isBlocked(exp.account_name || "", exp.vendor_name || "")) months[m].blocked += exp.tax_total;
-          else months[m].input += exp.tax_total;
-          months[m].expCount++;
+          if (!monthData[m]) monthData[m] = { output: 0, input: 0, blocked: 0, b2b: 0, b2c: 0, invCount: 0, expCount: 0 };
+          if (isBlocked(exp.account_name || "", exp.vendor_name || "")) monthData[m].blocked += (exp.tax_total || 0);
+          else monthData[m].input += (exp.tax_total || 0);
+          monthData[m].expCount++;
         }
-        const rows = Object.entries(months).sort((a, b) => b[0].localeCompare(a[0]));
+        const rows = Object.entries(monthData).sort((a, b) => b[0].localeCompare(a[0]));
+        const totOutput = rows.reduce((s, [,d]) => s + d.output, 0);
+        const totInput = rows.reduce((s, [,d]) => s + d.input, 0);
+        const totBlocked = rows.reduce((s, [,d]) => s + d.blocked, 0);
         return (
           <div className="space-y-4">
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-xs text-blue-700">
-              <p className="font-semibold mb-1">GST Filing Summary — Monthly</p>
-              <p>Output GST = collected on sales invoices · Input GST = paid on eligible expenses · Net Payable = Output − Input · Blocked ITC = ineligible claims u/s 17(5)</p>
+              <p className="font-semibold mb-1">GST Filing Summary — Month-wise</p>
+              <p>Output GST (GSTR-1) · Input ITC (GSTR-3B) · Net Payable = Output − ITC · Blocked ITC u/s 17(5) cannot be claimed</p>
             </div>
-            <Table cols={["Month", "Output GST", "Input GST", "Blocked ITC", "Net Payable", "Invoices", "Expenses"]}
-              rows={rows.map(([m, d]) => [
-                <span className="font-semibold">{m}</span>,
-                <span className="text-red-600 font-medium">{inr(d.output)}</span>,
-                <span className="text-emerald-600">{inr(d.input)}</span>,
-                <span className="text-amber-600">{d.blocked > 0 ? inr(d.blocked) : "—"}</span>,
-                <span className="font-bold text-zinc-900">{inr(d.output - d.input)}</span>,
-                String(d.invoiceCount), String(d.expCount),
-              ])} empty="No GST data" />
+            <div className="grid grid-cols-4 gap-3">
+              <Card label="Total Output GST" value={inr(totOutput)} color="text-red-600" />
+              <Card label="Total Input ITC" value={inr(totInput)} color="text-emerald-600" />
+              <Card label="Blocked ITC" value={inr(totBlocked)} color="text-amber-600" />
+              <Card label="Net GST Payable" value={inr(totOutput - totInput)} color="text-blue-600" />
+            </div>
+            <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden shadow-sm">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-zinc-200 bg-zinc-50">
+                      {["Month", "FY", "B2B Sales", "B2C Sales", "Output GST", "Input ITC", "Blocked ITC", "Net Payable", "Invoices", "Expenses"].map((c, i) => (
+                        <th key={i} className={`px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide whitespace-nowrap ${i > 1 ? "text-right" : "text-left"}`}>{c}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map(([m, d]) => (
+                      <tr key={m} className="border-b border-zinc-100 last:border-0 hover:bg-zinc-50">
+                        <td className="px-4 py-3 font-semibold text-zinc-900">{new Date(m + "-01").toLocaleDateString("en-IN", { month: "short", year: "numeric" })}</td>
+                        <td className="px-4 py-3 text-xs text-zinc-400">{getFY(m + "-01")}</td>
+                        <td className="px-4 py-3 text-right text-zinc-600">{inr(d.b2b)}</td>
+                        <td className="px-4 py-3 text-right text-zinc-600">{inr(d.b2c)}</td>
+                        <td className="px-4 py-3 text-right font-medium text-red-600">{inr(d.output)}</td>
+                        <td className="px-4 py-3 text-right font-medium text-emerald-600">{inr(d.input)}</td>
+                        <td className="px-4 py-3 text-right text-amber-600">{d.blocked > 0 ? inr(d.blocked) : "—"}</td>
+                        <td className="px-4 py-3 text-right font-bold text-blue-600">{inr(d.output - d.input)}</td>
+                        <td className="px-4 py-3 text-right text-zinc-400">{d.invCount}</td>
+                        <td className="px-4 py-3 text-right text-zinc-400">{d.expCount}</td>
+                      </tr>
+                    ))}
+                    {rows.length > 1 && (
+                      <tr className="border-t-2 border-zinc-300 bg-zinc-50 font-bold">
+                        <td className="px-4 py-3 text-zinc-900">Total</td>
+                        <td className="px-4 py-3"></td>
+                        <td className="px-4 py-3 text-right">{inr(rows.reduce((s,[,d])=>s+d.b2b,0))}</td>
+                        <td className="px-4 py-3 text-right">{inr(rows.reduce((s,[,d])=>s+d.b2c,0))}</td>
+                        <td className="px-4 py-3 text-right text-red-600">{inr(totOutput)}</td>
+                        <td className="px-4 py-3 text-right text-emerald-600">{inr(totInput)}</td>
+                        <td className="px-4 py-3 text-right text-amber-600">{totBlocked > 0 ? inr(totBlocked) : "—"}</td>
+                        <td className="px-4 py-3 text-right text-blue-600">{inr(totOutput - totInput)}</td>
+                        <td className="px-4 py-3 text-right">{rows.reduce((s,[,d])=>s+d.invCount,0)}</td>
+                        <td className="px-4 py-3 text-right">{rows.reduce((s,[,d])=>s+d.expCount,0)}</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         );
       })()}
 
       {/* TDS Summary */}
       {section === "tds" && (() => {
-        const tdsItems = expenses.map(exp => {
+        const filtExp = filterByFYMonth(expenses, fy, month);
+        const tdsItems = filtExp.map(exp => {
           const rule = inferTds(exp.vendor_name || "", exp.account_name || "", exp.total);
           if (!rule) return null;
           return { exp, rule, expectedTds: Math.round(exp.total * rule.rate / 100) };
         }).filter(Boolean) as { exp: Expense; rule: typeof TDS[0]; expectedTds: number }[];
+
+        // Month-wise TDS breakdown
+        const byMonth: Record<string, { count: number; total: number; tds: number; fy: string }> = {};
+        for (const t of tdsItems) {
+          const m = t.exp.date?.slice(0, 7) || "unknown";
+          if (!byMonth[m]) byMonth[m] = { count: 0, total: 0, tds: 0, fy: getFY(t.exp.date || "") };
+          byMonth[m].count++; byMonth[m].total += t.exp.total; byMonth[m].tds += t.expectedTds;
+        }
+
+        // Section-wise TDS breakdown
         const bySec: Record<string, { count: number; total: number; tds: number }> = {};
         for (const t of tdsItems) {
           if (!bySec[t.rule.sec]) bySec[t.rule.sec] = { count: 0, total: 0, tds: 0 };
           bySec[t.rule.sec].count++; bySec[t.rule.sec].total += t.exp.total; bySec[t.rule.sec].tds += t.expectedTds;
         }
+        const monthRows = Object.entries(byMonth).sort((a, b) => b[0].localeCompare(a[0]));
+        const totTds = tdsItems.reduce((s, t) => s + t.expectedTds, 0);
+
         return (
-          <div className="space-y-4">
+          <div className="space-y-5">
             <div className="bg-violet-50 border border-violet-200 rounded-xl p-4 text-xs text-violet-700">
-              <p className="font-semibold mb-1">TDS Summary — for 26Q / 27Q Quarterly Filing</p>
-              <p>Estimated TDS liability based on expense data. Inferred from vendor name + account head + amount threshold. Verify and deduct before payment.</p>
+              <p className="font-semibold mb-1">TDS Summary — for Form 26Q / 27Q Quarterly Filing</p>
+              <p>Estimated TDS liability inferred from vendor name + account head + amount threshold. Deposit by 7th of next month (March: 30 Apr) via ITNS 281.</p>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Card label="Total TDS Liability" value={inr(tdsItems.reduce((s, t) => s + t.expectedTds, 0))} color="text-violet-600" />
+            <div className="grid grid-cols-3 gap-3">
+              <Card label="Total TDS Liability" value={inr(totTds)} color="text-violet-600" />
               <Card label="Transactions Liable" value={String(tdsItems.length)} />
+              <Card label="Quarters in Period" value={String(new Set(tdsItems.map(t => { const d = new Date(t.exp.date); const q = Math.floor((d.getMonth() - 3 + 12) % 12 / 3); return `${getFY(t.exp.date)}-Q${q+1}`; })).size)} />
             </div>
-            <Table cols={["Section", "Transactions", "Expense Total", "TDS @Rate"]}
-              rows={Object.entries(bySec).map(([sec, d]) => {
-                const rule = TDS.find(r => r.sec === sec)!;
-                return [<span className="font-semibold">{rule.label}</span>, String(d.count), inr(d.total), <span className="font-bold text-violet-600">{inr(d.tds)}</span>];
-              })} empty="No TDS liability found" />
-            <Table cols={["Vendor", "Account", "Date", "Amount", "Section", "TDS Due"]}
-              rows={tdsItems.map(t => [
-                t.exp.vendor_name || "—",
-                <span className="text-xs">{t.exp.account_name || "—"}</span>,
-                fdate(t.exp.date),
-                inr(t.exp.total),
-                <span className="text-xs font-mono">{t.rule.sec}</span>,
-                <span className="font-bold text-violet-600">{inr(t.expectedTds)}</span>,
-              ])} />
+
+            {/* Month-wise column view */}
+            <div>
+              <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">Month-wise TDS</p>
+              <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden shadow-sm">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-zinc-200 bg-zinc-50">
+                        {["Month", "FY", "Quarter", "Transactions", "Expense Total", "TDS Liability", "Deposit Due"].map((c, i) => (
+                          <th key={i} className={`px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide whitespace-nowrap ${i > 1 ? "text-right" : "text-left"}`}>{c}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {monthRows.map(([m, d]) => {
+                        const dt = new Date(m + "-01");
+                        const qNum = Math.floor((dt.getMonth() - 3 + 12) % 12 / 3) + 1;
+                        const depositDue = dt.getMonth() === 2 ? "30 Apr" : new Date(dt.getFullYear(), dt.getMonth() + 1, 7).toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+                        return (
+                          <tr key={m} className="border-b border-zinc-100 last:border-0 hover:bg-zinc-50">
+                            <td className="px-4 py-3 font-semibold">{dt.toLocaleDateString("en-IN", { month: "short", year: "numeric" })}</td>
+                            <td className="px-4 py-3 text-xs text-zinc-400">{d.fy}</td>
+                            <td className="px-4 py-3 text-right"><span className="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full font-medium">Q{qNum}</span></td>
+                            <td className="px-4 py-3 text-right text-zinc-600">{d.count}</td>
+                            <td className="px-4 py-3 text-right text-zinc-600">{inr(d.total)}</td>
+                            <td className="px-4 py-3 text-right font-bold text-violet-600">{inr(d.tds)}</td>
+                            <td className="px-4 py-3 text-right text-xs font-medium text-zinc-500">{depositDue}</td>
+                          </tr>
+                        );
+                      })}
+                      {monthRows.length > 1 && (
+                        <tr className="border-t-2 border-zinc-300 bg-zinc-50 font-bold">
+                          <td className="px-4 py-3">Total</td>
+                          <td className="px-4 py-3"></td>
+                          <td className="px-4 py-3"></td>
+                          <td className="px-4 py-3 text-right">{tdsItems.length}</td>
+                          <td className="px-4 py-3 text-right">{inr(tdsItems.reduce((s,t)=>s+t.exp.total,0))}</td>
+                          <td className="px-4 py-3 text-right text-violet-600">{inr(totTds)}</td>
+                          <td className="px-4 py-3"></td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            {/* Section-wise TDS */}
+            <div>
+              <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">Section-wise TDS</p>
+              <Table cols={["Section", "Transactions", "Expense Total", "TDS @Rate"]}
+                rows={Object.entries(bySec).map(([sec, d]) => {
+                  const rule = TDS.find(r => r.sec === sec)!;
+                  return [<span className="font-semibold">{rule.label}</span>, String(d.count), inr(d.total), <span className="font-bold text-violet-600">{inr(d.tds)}</span>];
+                })} empty="No TDS liability found" />
+            </div>
+
+            {/* Transaction detail */}
+            <div>
+              <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">Transaction Detail</p>
+              <Table cols={["Vendor", "Account", "Date", "FY", "Amount", "Section", "TDS Due"]}
+                rows={tdsItems.map(t => [
+                  t.exp.vendor_name || "—",
+                  <span className="text-xs">{t.exp.account_name || "—"}</span>,
+                  fdate(t.exp.date),
+                  <span className="text-xs text-zinc-400">{getFY(t.exp.date || "")}</span>,
+                  inr(t.exp.total),
+                  <span className="text-xs font-mono font-bold text-violet-700">{t.rule.sec}</span>,
+                  <span className="font-bold text-violet-600">{inr(t.expectedTds)}</span>,
+                ])} />
+            </div>
           </div>
         );
       })()}
@@ -813,6 +1032,8 @@ function ComplianceModule({ orgId, clientName }: { orgId: string; clientName: st
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fy, setFy] = useState("All");
+  const [month, setMonth] = useState("All");
 
   useEffect(() => {
     Promise.all([
@@ -833,14 +1054,16 @@ function ComplianceModule({ orgId, clientName }: { orgId: string; clientName: st
 
   if (loading) return <div className="text-center py-20 text-zinc-400">Loading compliance data...</div>;
 
-  const totalSales = invoices.reduce((s, i) => s + i.total, 0);
-  const totalGstOutput = invoices.reduce((s, i) => s + i.tax_total, 0);
-  const totalGstInput = expenses.filter(e => !isBlocked(e.account_name || "", e.vendor_name || "")).reduce((s, e) => s + (e.tax_total || 0), 0);
-  const tdsItems = expenses.filter(e => inferTds(e.vendor_name || "", e.account_name || "", e.total));
+  const filtInvoices = filterByFYMonth(invoices, fy, month);
+  const filtExpenses = filterByFYMonth(expenses, fy, month);
+  const totalSales = filtInvoices.reduce((s, i) => s + i.total, 0);
+  const totalGstOutput = filtInvoices.reduce((s, i) => s + i.tax_total, 0);
+  const totalGstInput = filtExpenses.filter(e => !isBlocked(e.account_name || "", e.vendor_name || "")).reduce((s, e) => s + (e.tax_total || 0), 0);
+  const tdsItems = filtExpenses.filter(e => inferTds(e.vendor_name || "", e.account_name || "", e.total));
   const totalTdsLiability = tdsItems.reduce((s, e) => { const r = inferTds(e.vendor_name || "", e.account_name || "", e.total); return s + (r ? Math.round(e.total * r.rate / 100) : 0); }, 0);
-  const overdueInvoices = invoices.filter(i => i.balance > 0 && i.due_date && daysDiff(i.due_date) > 0);
-  const missingIRN = invoices.filter(i => i.total >= 500000 && !i.reference_number);
-  const missingGSTIN = invoices.filter(i => !i.gst_number && i.tax_total > 0);
+  const overdueInvoices = filtInvoices.filter(i => i.balance > 0 && i.due_date && daysDiff(i.due_date) > 0);
+  const missingIRN = filtInvoices.filter(i => i.total >= 500000 && !i.reference_number);
+  const missingGSTIN = filtInvoices.filter(i => !i.gst_number && i.tax_total > 0);
 
   return (
     <div className="space-y-4">
@@ -852,6 +1075,11 @@ function ComplianceModule({ orgId, clientName }: { orgId: string; clientName: st
           </button>
         ))}
       </div>
+
+      {/* FY / Month Filter */}
+      <FYMonthFilter
+        dates={[...invoices, ...expenses].map(i => (i as any).date || "")}
+        fy={fy} month={month} onFY={v => { setFy(v); setMonth("All"); }} onMonth={setMonth} />
 
       {section === "summary" && (
         <div className="space-y-6">
@@ -949,13 +1177,13 @@ function ComplianceModule({ orgId, clientName }: { orgId: string; clientName: st
             <Table cols={["Month", "Sales (B2B)", "Sales (B2C)", "Output GST", "Input GST", "Net Payable"]}
               rows={(() => {
                 const months: Record<string, { b2b: number; b2c: number; output: number; input: number }> = {};
-                for (const inv of invoices) {
+                for (const inv of filtInvoices) {
                   const m = inv.date?.slice(0, 7) || "";
                   if (!months[m]) months[m] = { b2b: 0, b2c: 0, output: 0, input: 0 };
                   if (inv.gst_number) months[m].b2b += inv.total; else months[m].b2c += inv.total;
                   months[m].output += inv.tax_total;
                 }
-                for (const exp of expenses) {
+                for (const exp of filtExpenses) {
                   const m = exp.date?.slice(0, 7) || "";
                   if (!months[m]) months[m] = { b2b: 0, b2c: 0, output: 0, input: 0 };
                   if (!isBlocked(exp.account_name || "", exp.vendor_name || "")) months[m].input += (exp.tax_total || 0);
@@ -1042,9 +1270,9 @@ function ComplianceModule({ orgId, clientName }: { orgId: string; clientName: st
           <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-5">
             <p className="font-semibold text-zinc-700 mb-4">Income Tax Filing Summary</p>
             <div className="grid grid-cols-2 gap-3 mb-4">
-              <Card label="Total Revenue (Gross)" value={inr(totalSales)} />
-              <Card label="Total Expenses" value={inr(expenses.reduce((s, e) => s + e.total, 0))} color="text-red-600" />
-              <Card label="Net Profit (Indicative)" value={inr(totalSales - expenses.reduce((s, e) => s + e.total, 0))} color="text-emerald-600" />
+              <Card label={`Total Revenue (${fy !== "All" ? fy : "All FY"}${month !== "All" ? " · " + month : ""})`} value={inr(totalSales)} />
+              <Card label="Total Expenses" value={inr(filtExpenses.reduce((s, e) => s + e.total, 0))} color="text-red-600" />
+              <Card label="Net Profit (Indicative)" value={inr(totalSales - filtExpenses.reduce((s, e) => s + e.total, 0))} color="text-emerald-600" />
               <Card label="TDS Deducted (as deductee)" value={inr(0)} sub="Add from Form 26AS" />
             </div>
             <div className="space-y-3 text-sm">

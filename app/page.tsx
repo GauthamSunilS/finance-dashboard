@@ -1818,7 +1818,7 @@ function ClientModule({ client, onBack }: { client: Client; onBack: () => void }
       {/* Module selector */}
       <div className="border-b border-zinc-200 px-6 flex gap-0">
         {MODULES.map(m => (
-          <button key={m.key} onClick={() => { setModule(m.key); try { const id = window.location.hash.replace("#","").split("|")[0]; window.location.hash = id + "|" + m.key; } catch {} }}
+          <button key={m.key} onClick={() => { setModule(m.key); try { const id = window.location.hash.replace("#","").split("|")[0]; const defaults: Record<string,string> = {accounting:"invoices",audit:"overview",compliance:"summary"}; window.location.hash = id + "|" + m.key + "|" + (defaults[m.key]||""); } catch {} }}
             className={`flex flex-col px-5 py-3 border-b-2 -mb-px transition text-left ${module === m.key ? "border-black" : "border-transparent hover:border-zinc-300"}`}>
             <span className={`text-sm font-semibold ${module === m.key ? "text-black" : "text-zinc-400"}`}>{m.label}</span>
             <span className="text-xs text-zinc-400 mt-0.5">{m.desc}</span>
@@ -1853,7 +1853,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
 
   useEffect(() => {
     if (!activeClientId) return;
-    try { const tab = window.location.hash.replace("#","").split("|")[1] || "accounting"; window.location.hash = activeClientId + "|" + tab; } catch {}
+    try { const parts = window.location.hash.replace("#","").split("|"); const tab = parts[1] || "accounting"; const sec = parts[2] || ""; window.location.hash = activeClientId + "|" + tab + (sec ? "|" + sec : ""); } catch {}
   }, [activeClientId]);
 
   const activeClient = clients.find(c => c.id === activeClientId) || null;

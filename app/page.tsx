@@ -73,12 +73,13 @@ const SC: Record<string, string> = {
 function Badge({ s }: { s: string }) {
   return <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${SC[s?.toLowerCase()] || "bg-zinc-100 text-zinc-400"}`}>{s || "—"}</span>;
 }
-function Card({ label, value, sub, color = "text-zinc-900" }: { label: string; value: string; sub?: string; color?: string }) {
+function Card({ label, value, sub, color = "text-zinc-900", onClick, active }: { label: string; value: string; sub?: string; color?: string; onClick?: () => void; active?: boolean }) {
   return (
-    <div className="bg-white border border-zinc-200 rounded-xl p-4 shadow-sm">
+    <div onClick={onClick} className={`bg-white border rounded-xl p-4 shadow-sm transition-all ${onClick ? "cursor-pointer hover:shadow-md" : ""} ${active ? "border-black ring-2 ring-black ring-offset-1" : "border-zinc-200"}`}>
       <p className="text-xs text-zinc-400 uppercase tracking-wide mb-1">{label}</p>
       <p className={`text-xl font-bold ${color}`}>{value}</p>
       {sub && <p className="text-xs text-zinc-400 mt-0.5">{sub}</p>}
+      {active && <p className="text-xs text-zinc-500 mt-1 font-medium">✓ Filtered</p>}
     </div>
   );
 }
@@ -713,16 +714,19 @@ function AccountingModule({ orgId, initSection = "" }: { orgId: string; initSect
 
       {/* INVOICES */}
       {section === "invoices" && (() => {
-        const d = filterByFYMonth(invoices, fy, month).filter(i => i.invoice_number?.toLowerCase().includes(search.toLowerCase()) || i.customer_name?.toLowerCase().includes(search.toLowerCase()));
-        const total = d.reduce((s, i) => s + i.total, 0); const balance = d.reduce((s, i) => s + i.balance, 0); const gst = d.reduce((s, i) => s + i.tax_total, 0);
-        const cur = d[0]?.currency_code || "INR";
+        const [cardFilter, setCardFilter] = useState<string | null>(null);
+        const base = filterByFYMonth(invoices, fy, month).filter(i => i.invoice_number?.toLowerCase().includes(search.toLowerCase()) || i.customer_name?.toLowerCase().includes(search.toLowerCase()));
+        const d = cardFilter === "outstanding" ? base.filter(i => i.balance > 0) : cardFilter === "paid" ? base.filter(i => i.status === "paid") : cardFilter === "overdue" ? base.filter(i => i.balance > 0 && i.due_date && new Date(i.due_date) < new Date()) : base;
+        const total = base.reduce((s, i) => s + i.total, 0); const balance = base.reduce((s, i) => s + i.balance, 0); const gst = base.reduce((s, i) => s + i.tax_total, 0);
+        const cur = base[0]?.currency_code || "INR";
+        const toggle = (f: string) => setCardFilter(prev => prev === f ? null : f);
         return (
           <div className="space-y-4">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <Card label="Total Invoiced" value={fmt(total, cur)} />
-              <Card label="Outstanding" value={fmt(balance, cur)} color="text-amber-600" />
-              <Card label="GST Collected" value={fmt(gst, cur)} color="text-blue-600" />
-              <Card label="Paid / Total" value={`${d.filter(i => i.status === "paid").length} / ${d.length}`} color="text-emerald-600" />
+              <Card label="Total Invoiced" value={fmt(total, cur)} onClick={() => toggle("all")} active={cardFilter === "all"} />
+              <Card label="Outstanding" value={fmt(balance, cur)} color="text-amber-600" onClick={() => toggle("outstanding")} active={cardFilter === "outstanding"} />
+              <Card label="GST Collected" value={fmt(gst, cur)} color="text-blue-600" onClick={() => toggle("gst")} active={cardFilter === "gst"} />
+              <Card label={`Paid (${base.filter(i => i.status === "paid").length})`} value={`${base.filter(i => i.status === "paid").length} / ${base.length}`} color="text-emerald-600" onClick={() => toggle("paid")} active={cardFilter === "paid"} />
             </div>
             <Table cols={["Invoice #", "Customer", "Date", "Due", "Status", "Subtotal", "GST", "Total", "Balance"]}
               rows={d.map(i => [
@@ -781,13 +785,16 @@ function AccountingModule({ orgId, initSection = "" }: { orgId: string; initSect
 
       {/* PAYMENTS / RECEIPTS */}
       {section === "payments" && (() => {
-        const d = filterByFYMonth(payments, fy, month).filter(p => p.payment_number?.toLowerCase().includes(search.toLowerCase()) || p.customer_name?.toLowerCase().includes(search.toLowerCase()));
+        const [cardFilter, setCardFilter] = useState<string | null>(null);
+        const allPay = filterByFYMonth(payments, fy, month).filter(p => p.payment_number?.toLowerCase().includes(search.toLowerCase()) || p.customer_name?.toLowerCase().includes(search.toLowerCase()));
+        const d = cardFilter === "forex" ? allPay.filter(p => p.currency_code && p.currency_code !== "INR") : allPay;
+        const toggle = (f: string) => setCardFilter(prev => prev === f ? null : f);
         return (
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-3">
-              <Card label="Total Receipts" value={String(d.length)} />
-              <Card label="Total Received" value={fmt(d.reduce((s, i) => s + i.amount, 0), d[0]?.currency_code)} color="text-emerald-600" />
-              <Card label="Avg per Receipt" value={fmt(d.length > 0 ? d.reduce((s, i) => s + i.amount, 0) / d.length : 0, d[0]?.currency_code)} />
+              <Card label="Total Receipts" value={String(allPay.length)} />
+              <Card label="Total Received" value={fmt(allPay.reduce((s, i) => s + i.amount, 0), allPay[0]?.currency_code)} color="text-emerald-600" />
+              <Card label="Foreign Currency" value={String(allPay.filter(p => p.currency_code && p.currency_code !== "INR").length)} color="text-blue-600" onClick={() => toggle("forex")} active={cardFilter === "forex"} sub="Click to filter forex" />
             </div>
             <Table cols={["Receipt #", "Customer", "Date", "Mode", "Foreign Amt", "Forex Rate", "INR Amount"]}
               rows={d.map(p => {
@@ -856,13 +863,16 @@ function AccountingModule({ orgId, initSection = "" }: { orgId: string; initSect
 
       {/* BILLS */}
       {section === "bills" && (() => {
-        const d = filterByFYMonth(bills, fy, month).filter(b => b.bill_number?.toLowerCase().includes(search.toLowerCase()) || b.vendor_name?.toLowerCase().includes(search.toLowerCase()));
+        const [cardFilter, setCardFilter] = useState<string | null>(null);
+        const base = filterByFYMonth(bills, fy, month).filter(b => b.bill_number?.toLowerCase().includes(search.toLowerCase()) || b.vendor_name?.toLowerCase().includes(search.toLowerCase()));
+        const d = cardFilter === "outstanding" ? base.filter(b => b.balance > 0) : cardFilter === "paid" ? base.filter(b => b.status === "paid") : base;
+        const toggle = (f: string) => setCardFilter(prev => prev === f ? null : f);
         return (
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-3">
-              <Card label="Total Bills" value={String(d.length)} />
-              <Card label="Outstanding" value={fmt(d.reduce((s, i) => s + i.balance, 0), d[0]?.currency_code)} color="text-amber-600" />
-              <Card label="Total Value" value={fmt(d.reduce((s, i) => s + i.total, 0), d[0]?.currency_code)} />
+              <Card label="Total Bills" value={String(base.length)} onClick={() => toggle("all")} active={cardFilter === "all"} />
+              <Card label="Outstanding" value={fmt(base.reduce((s, i) => s + i.balance, 0), base[0]?.currency_code)} color="text-amber-600" onClick={() => toggle("outstanding")} active={cardFilter === "outstanding"} />
+              <Card label="Paid" value={String(base.filter(b => b.status === "paid").length)} color="text-emerald-600" onClick={() => toggle("paid")} active={cardFilter === "paid"} />
             </div>
             <Table cols={["Bill #", "Vendor", "Date", "Due", "Status", "Total", "Balance", ""]}
               rows={d.map(b => [

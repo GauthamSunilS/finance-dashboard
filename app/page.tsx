@@ -284,7 +284,7 @@ function SalesOrdersTab({ clientId }: { clientId: string }) {
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={6} className="text-center py-10 text-zinc-500">No data yet — sync from Zoho to populate</td></tr>
+                <tr><td colSpan={8} className="text-center py-10 text-zinc-500">No data yet — sync from Zoho to populate</td></tr>
               ) : filtered.map((s, i) => (
                 <tr key={s.id} className={`border-b border-zinc-800/60 hover:bg-zinc-800/40 ${i % 2 === 0 ? "" : "bg-zinc-900/50"}`}>
                   <td className="px-4 py-3 font-mono text-zinc-400 text-xs">{s.salesorder_number}</td>
@@ -351,7 +351,7 @@ function EstimatesTab({ clientId }: { clientId: string }) {
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={6} className="text-center py-10 text-zinc-500">No data yet — sync from Zoho to populate</td></tr>
+                <tr><td colSpan={8} className="text-center py-10 text-zinc-500">No data yet — sync from Zoho to populate</td></tr>
               ) : filtered.map((e, i) => (
                 <tr key={e.id} className={`border-b border-zinc-800/60 hover:bg-zinc-800/40 ${i % 2 === 0 ? "" : "bg-zinc-900/50"}`}>
                   <td className="px-4 py-3 font-mono text-zinc-400 text-xs">{e.estimate_number}</td>
@@ -457,8 +457,9 @@ function ExpensesTab({ clientId }: { clientId: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         <SummaryCard label="Total Expenses" value={`${filtered.length}`} color="text-white" />
+        <SummaryCard label="Total GST Paid" value={fmt(filtered.reduce((s,e) => s + (e.tax_total || 0), 0), data[0]?.currency_code || "INR")} color="text-blue-400" />
         <SummaryCard label="Total Amount" value={fmt(total, data[0]?.currency_code || "INR")} color="text-red-400" />
       </div>
       <input value={search} onChange={e => setSearch(e.target.value)}
@@ -474,12 +475,14 @@ function ExpensesTab({ clientId }: { clientId: string }) {
                 <th className="text-left px-4 py-3">Vendor</th>
                 <th className="text-left px-4 py-3">Date</th>
                 <th className="text-left px-4 py-3">Status</th>
-                <th className="text-right px-4 py-3">Amount</th>
+                <th className="text-right px-4 py-3">Taxable</th>
+                <th className="text-right px-4 py-3">GST</th>
+                <th className="text-right px-4 py-3">Total</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={6} className="text-center py-10 text-zinc-500">No data yet — sync from Zoho to populate</td></tr>
+                <tr><td colSpan={8} className="text-center py-10 text-zinc-500">No data yet — sync from Zoho to populate</td></tr>
               ) : filtered.map((e, i) => (
                 <tr key={e.id} className={`border-b border-zinc-800/60 hover:bg-zinc-800/40 ${i % 2 === 0 ? "" : "bg-zinc-900/50"}`}>
                   <td className="px-4 py-3 font-mono text-zinc-400 text-xs">{e.expense_number?.slice(-10) || "—"}</td>
@@ -487,6 +490,8 @@ function ExpensesTab({ clientId }: { clientId: string }) {
                   <td className="px-4 py-3 text-zinc-300">{e.vendor_name}</td>
                   <td className="px-4 py-3 text-zinc-400">{fmtDate(e.date)}</td>
                   <td className="px-4 py-3"><Badge status={e.status} /></td>
+                  <td className="px-4 py-3 text-right text-zinc-300">{e.sub_total > 0 ? fmt(e.sub_total, e.currency_code || "INR") : fmt(e.total - (e.tax_total || 0), e.currency_code || "INR")}</td>
+                  <td className="px-4 py-3 text-right text-blue-400">{e.tax_total > 0 ? fmt(e.tax_total, e.currency_code || "INR") : "—"}</td>
                   <td className="px-4 py-3 text-right font-semibold text-red-400">{fmt(e.total, e.currency_code || "INR")}</td>
                 </tr>
               ))}

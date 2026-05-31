@@ -425,7 +425,22 @@ serve(async (req) => {
       summary["credit_notes"] = (summary["credit_notes"] || 0) + creditNotes.length;
 
       // ── EXPENSE MODULE ───────────────────────────────────────────────────────
-      const expenses = (await fetchAll(token, orgId, "expenses", "expenses")).map(e => mapExpense(e, orgId));
+      // Fetch expense list first, then get full details for each (for GST/tax breakdown)
+      const expenseList = await fetchAll(token, orgId, "expenses", "expenses");
+      const expenses: any[] = [];
+      for (const exp of expenseList) {
+        try {
+          const detailRes = await fetch(
+            `https://www.zohoapis.in/books/v3/expenses/${exp.expense_id}?organization_id=${orgId}`,
+            { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
+          );
+          const detailData = await detailRes.json();
+          const detail = detailData.expense || exp;
+          expenses.push(mapExpense(detail, orgId));
+        } catch {
+          expenses.push(mapExpense(exp, orgId));
+        }
+      }
       await upsert(SUPABASE_URL, KEY, "expenses", expenses);
       summary["expenses"] = (summary["expenses"] || 0) + expenses.length;
 

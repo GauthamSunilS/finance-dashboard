@@ -1647,9 +1647,8 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
           <div className="border border-zinc-200 rounded-xl overflow-hidden">
             {/* Table header */}
             <div className="grid grid-cols-12 bg-zinc-50 border-b border-zinc-200 px-6 py-2.5 text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-              <div className="col-span-5">Client Name</div>
+              <div className="col-span-9">Client Name</div>
               <div className="col-span-2">Source</div>
-              <div className="col-span-4">Modules</div>
               <div className="col-span-1"></div>
             </div>
             {/* Client rows */}
@@ -1663,7 +1662,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
                 onClick={() => { window.location.hash = client.id + "|invoices"; setActiveClientId(client.id); }}
                 className="w-full grid grid-cols-12 items-center px-6 py-4 text-left hover:bg-zinc-50 transition border-b border-zinc-100 last:border-0 group"
               >
-                <div className="col-span-5 flex items-center gap-3">
+                <div className="col-span-9 flex items-center gap-3">
                   <div className="w-8 h-8 rounded-lg bg-black text-white flex items-center justify-center text-xs font-bold flex-shrink-0">
                     {client.name?.charAt(0).toUpperCase()}
                   </div>
@@ -1677,9 +1676,6 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
                   }`}>
                     {client.source?.toUpperCase()}
                   </span>
-                </div>
-                <div className="col-span-4 text-xs text-zinc-400">
-                  Invoices · Sales Orders · Payments · Expenses · Audit
                 </div>
                 <div className="col-span-1 text-right text-zinc-300 group-hover:text-black transition text-lg">
                   →

@@ -40,9 +40,12 @@ type Payment = {
 };
 
 type Expense = {
-  id: string; expense_number: string; account_name: string;
-  vendor_name: string; status: string; date: string;
-  total: number; currency_code: string; description: string | null;
+  id: string; expense_number: string; account_name: string | null;
+  vendor_name: string | null; status: string; date: string;
+  total: number; sub_total: number; tax_total: number;
+  currency_code: string | null; description: string | null;
+  reference_number: string | null; is_billable: boolean | null;
+  customer_name: string | null; paid_through_account_name: string | null;
 };
 
 type SubModule = "invoices" | "sales_orders" | "estimates" | "payments" | "expenses" | "audit";

@@ -1090,7 +1090,7 @@ function EditableTDSTable({ items, orgId }: { items: { exp: Expense; rule: typeo
 // ─── Ledger TDS Tracker ───────────────────────────────────────────────────────
 type TDSTxnRow = {
   id: string; date: string; vendor: string; account: string; amount: number;
-  ref: string; source: "Bill" | "Expense";
+  ref: string; source: "Bill" | "Expense" | "Journal";
   tdsApplicable: boolean; sec: string; rate: number; tdsAmount: number;
   pan: string; manualTds: boolean; saved: boolean;
 };
@@ -1122,7 +1122,7 @@ function LedgerTDSTracker({ expenses, bills, orgId }: {
         const savedMap: Record<string, any> = {};
         for (const s of (sv || [])) savedMap[s.record_id || ""] = s.payload;
 
-        const makeRow = (id: string, date: string, vendor: string, account: string, amount: number, ref: string, source: "Bill" | "Expense", desc?: string): TDSTxnRow => {
+        const makeRow = (id: string, date: string, vendor: string, account: string, amount: number, ref: string, source: "Bill" | "Expense" | "Journal", desc?: string): TDSTxnRow => {
           const key = `txn||${source}||${id}`;
           const sv2 = savedMap[key];
           if (sv2) {
@@ -1157,9 +1157,9 @@ function LedgerTDSTracker({ expenses, bills, orgId }: {
             const key = `txn||Journal||${lineId}`;
             const sv2 = savedMap[key];
             if (sv2) {
-              jRows.push({ id: lineId, date: j.journal_date, vendor: j.entry_number||"Journal", account: acct, amount: amt, ref: j.entry_number||j.id.slice(-8), source: "Journal" as any, ...sv2, saved: true });
+              jRows.push({ id: lineId, date: j.journal_date, vendor: j.entry_number||"Journal", account: acct, amount: amt, ref: j.entry_number||j.id.slice(-8), source: "Journal", ...sv2, saved: true });
             } else {
-              jRows.push({ id: lineId, date: j.journal_date, vendor: j.entry_number||"Journal", account: acct, amount: amt, ref: j.entry_number||j.id.slice(-8), source: "Journal" as any, tdsApplicable: true, sec: inf.sec, rate: inf.rate, tdsAmount: Math.round(amt * inf.rate / 100), pan: "", manualTds: false, saved: false });
+              jRows.push({ id: lineId, date: j.journal_date, vendor: j.entry_number||"Journal", account: acct, amount: amt, ref: j.entry_number||j.id.slice(-8), source: "Journal", tdsApplicable: true, sec: inf.sec, rate: inf.rate, tdsAmount: Math.round(amt * inf.rate / 100), pan: "", manualTds: false, saved: false });
             }
           }
         }
@@ -1201,7 +1201,7 @@ function LedgerTDSTracker({ expenses, bills, orgId }: {
   const quarters = ["All", "Q1 (Apr-Jun)", "Q2 (Jul-Sep)", "Q3 (Oct-Dec)", "Q4 (Jan-Mar)"];
   const billRows = rows.filter(r => r.source === "Bill");
   const expRows = rows.filter(r => r.source === "Expense");
-  const jnlRows = rows.filter(r => r.source === ("Journal" as any));
+  const jnlRows = rows.filter(r => r.source === "Journal");
   const activeRows = (activeTab === "bills" ? billRows : activeTab === "expenses" ? expRows : jnlRows)
     .filter(r => quarter === "All" || getQuarter(r.date) === quarter)
     .sort((a, b) => (b.date||"").localeCompare(a.date||""));

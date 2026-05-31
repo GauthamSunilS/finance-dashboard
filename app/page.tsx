@@ -110,7 +110,7 @@ function Table({ cols, rows, empty = "No data" }: { cols: string[]; rows: React.
 
 // ─── TDS Rules ────────────────────────────────────────────────────────────────
 const TDS: { sec: string; label: string; kw: string[]; excludeKw: string[]; min: number; rate: number }[] = [
-  { sec: "194C", label: "194C – Contractors", kw: ["contractor","construction","transport","courier","logistics","freight","security","catering","cleaning","labour","manpower","event","fabrication","printing","repair","maintenance"], excludeKw: ["software","subscription","saas","cloud"], min: 30000, rate: 2 },
+  { sec: "194C", label: "194C – Contractors", kw: ["contractor","construction","transport","courier","logistics","freight","security","catering","cleaning","labour","manpower","event","fabrication","printing","repair","maintenance","video edit","editing","creative","production","animation","motion"], excludeKw: ["software","subscription","saas","cloud"], min: 30000, rate: 2 },
   { sec: "194J", label: "194J – Professional", kw: ["consultant","consulting","professional","legal","advocate","chartered","software","it service","technology","designer","freelancer","saas","advisory","audit fees","technical","dues & subscription","subscription","cloud"], excludeKw: ["bank","hardware","material"], min: 30000, rate: 10 },
   { sec: "194H", label: "194H – Commission", kw: ["commission","brokerage","referral fee","agent fee","dealer commission"], excludeKw: [], min: 15000, rate: 5 },
   { sec: "194I", label: "194I – Rent", kw: ["rent","lease","rental","property management","office space","premises","godown","warehouse"], excludeKw: ["bank charges","bank fee"], min: 50000, rate: 10 },
@@ -1088,37 +1088,48 @@ function EditableTDSTable({ items, orgId }: { items: { exp: Expense; rule: typeo
 
 
 // ─── Ledger TDS Tracker ───────────────────────────────────────────────────────
-type TDSLedgerRow = {
-  key: string; vendor: string; account: string; source: string;
-  totalAmount: number; transactions: { vendor: string; date: string; amount: number; ref: string; source: string }[];
+type TDSVendorRow = {
+  vendorKey: string; vendor: string; source: string;
+  totalAmount: number; transactions: { date: string; amount: number; ref: string; source: string }[];
   eligible: boolean; sec: string; rate: number; tdsAmount: number; pan: string; note: string;
 };
+type TDSLedgerGroup = {
+  account: string; source: string; totalAmount: number; totalTDS: number;
+  vendors: TDSVendorRow[]; isSalary: boolean;
+};
+
+const SALARY_KW = ["salary","payroll","wages","employee wages","staff salary","manpower payroll","net salary"];
+const isSalaryAcct = (s: string) => SALARY_KW.some(k => s.toLowerCase().includes(k));
 
 function LedgerTDSTracker({ expenses, bills, vendorPayments, journals, orgId }: {
   expenses: Expense[]; bills: Bill[]; vendorPayments: VendorPayment[]; journals: Journal[]; orgId: string;
 }) {
-  const [rows, setRows] = React.useState<TDSLedgerRow[]>([]);
-  const [saved, setSaved] = React.useState(false);
+  const [groups, setGroups] = React.useState<TDSLedgerGroup[]>([]);
   const [loading, setLoading] = React.useState(true);
-  const [expanded, setExpanded] = React.useState<string | null>(null);
+  const [expandedLedger, setExpandedLedger] = React.useState<string | null>(null);
+  const [expandedVendor, setExpandedVendor] = React.useState<string | null>(null);
+  const [activeTab, setActiveTab] = React.useState<"tds" | "salary">("tds");
+  const [saved, setSaved] = React.useState(false);
 
   React.useEffect(() => {
-    const map: Record<string, TDSLedgerRow> = {};
-    const bankKw = ["current account","savings account","cash in hand","petty cash","hdfc","icici","sbi","axis","kotak","indusind","yes bank","federal bank","rbl"];
+    const bankKw = ["current account","savings account","cash in hand","petty cash","hdfc","icici","sbi","axis","kotak","indusind","yes bank","federal bank","rbl","cash"];
     const isBank = (s: string) => bankKw.some(b => s.toLowerCase().includes(b));
 
-    const addTxn = (accountName: string, vendor: string, amount: number, date: string, ref: string, source: string) => {
-      if (!accountName || isBank(accountName)) return;
-      const key = accountName.toLowerCase().trim();
-      if (!map[key]) map[key] = { key, vendor: accountName, account: accountName, source, totalAmount: 0, transactions: [], eligible: false, sec: "194J", rate: 10, tdsAmount: 0, pan: "", note: "" };
-      map[key].totalAmount += amount;
-      map[key].transactions.push({ vendor: vendor || "—", date, amount, ref, source });
-      if (source !== "Journal") map[key].source = source;
+    const map: Record<string, Record<string, { txns: { date: string; amount: number; ref: string; source: string }[]; source: string }>> = {};
+
+    const add = (account: string, vendor: string, amount: number, date: string, ref: string, source: string) => {
+      if (!account || isBank(account) || amount <= 0) return;
+      const acct = account.trim();
+      const vend = (vendor || "—").trim();
+      if (!map[acct]) map[acct] = {};
+      if (!map[acct][vend]) map[acct][vend] = { txns: [], source };
+      map[acct][vend].txns.push({ date, amount, ref, source });
+      if (source !== "Journal") map[acct][vend].source = source;
     };
 
-    for (const e of expenses) addTxn(e.account_name||"", e.vendor_name||"", e.total, e.date, e.expense_number||e.id.slice(-8), "Expense");
-    for (const b of bills) addTxn(b.vendor_name||"", b.vendor_name||"", b.total, b.date, b.bill_number||b.id.slice(-8), "Bill");
-    for (const vp of vendorPayments) addTxn(vp.vendor_name||"", vp.vendor_name||"", vp.amount, vp.date, vp.payment_number||vp.id.slice(-8), "VendorPmt");
+    for (const e of expenses) add(e.account_name||"", e.vendor_name||"", e.total, e.date, e.expense_number||e.id.slice(-8), "Expense");
+    for (const b of bills) add(b.vendor_name||"", b.vendor_name||"", b.total, b.date, b.bill_number||b.id.slice(-8), "Bill");
+    for (const vp of vendorPayments) add(vp.vendor_name||"", vp.vendor_name||"", vp.amount, vp.date, vp.payment_number||vp.id.slice(-8), "VendorPmt");
     for (const j of journals) {
       try {
         const lines = JSON.parse(j.line_items || "[]");
@@ -1126,7 +1137,7 @@ function LedgerTDSTracker({ expenses, bills, vendorPayments, journals, orgId }: 
           const amt = Number(l.amount || l.debit || 0);
           const acct = l.account_name || "";
           if ((l.debit_or_credit === "debit" || Number(l.debit||0) > 0) && amt > 0 && !isBank(acct))
-            addTxn(acct, l.contact_name || l.customer_name || j.notes || "", amt, j.journal_date, j.entry_number||j.id.slice(-8), "Journal");
+            add(acct, l.contact_name || l.customer_name || j.notes || "", amt, j.journal_date, j.entry_number||j.id.slice(-8), "Journal");
         }
       } catch {}
     }
@@ -1135,170 +1146,251 @@ function LedgerTDSTracker({ expenses, bills, vendorPayments, journals, orgId }: 
       const savedMap: Record<string, any> = {};
       for (const s of (sv || [])) savedMap[s.record_id || ""] = s.payload;
 
-      const result: TDSLedgerRow[] = Object.entries(map)
-        .sort((a, b) => b[1].totalAmount - a[1].totalAmount)
-        .map(([key, entry]) => {
-          const sv2 = savedMap[key] || {};
-          const inf = inferTds("", entry.account, entry.totalAmount / Math.max(entry.transactions.length, 1));
-          return {
-            ...entry, key,
-            eligible: sv2.eligible !== undefined ? sv2.eligible : inf !== null,
-            sec: sv2.sec || inf?.sec || "194J",
-            rate: sv2.rate !== undefined ? sv2.rate : (inf?.rate || 10),
-            tdsAmount: sv2.tdsAmount !== undefined ? sv2.tdsAmount : (inf ? Math.round(entry.totalAmount * (inf.rate / 100)) : 0),
-            pan: sv2.pan || "", note: sv2.note || "",
-          };
+      const result: TDSLedgerGroup[] = Object.entries(map)
+        .sort((a, b) => {
+          const tA = Object.values(a[1]).reduce((s, v) => s + v.txns.reduce((ss, t) => ss + t.amount, 0), 0);
+          const tB = Object.values(b[1]).reduce((s, v) => s + v.txns.reduce((ss, t) => ss + t.amount, 0), 0);
+          return tB - tA;
+        })
+        .map(([account, vendorMap]) => {
+          const isSalary = isSalaryAcct(account);
+          const vendors: TDSVendorRow[] = Object.entries(vendorMap)
+            .sort((a, b) => b[1].txns.reduce((s,t)=>s+t.amount,0) - a[1].txns.reduce((s,t)=>s+t.amount,0))
+            .map(([vendor, data]) => {
+              const key = `${account.toLowerCase().trim()}||${vendor.toLowerCase().trim()}`;
+              const sv2 = savedMap[key] || {};
+              const totalAmt = data.txns.reduce((s, t) => s + t.amount, 0);
+              const avgAmt = totalAmt / data.txns.length;
+              const inf = isSalary ? { sec: "192", rate: 10 } : inferTds(vendor, account, avgAmt);
+              return {
+                vendorKey: key, vendor, source: data.source, totalAmount: totalAmt, transactions: data.txns,
+                eligible: sv2.eligible !== undefined ? sv2.eligible : inf !== null,
+                sec: sv2.sec || inf?.sec || "194J",
+                rate: sv2.rate !== undefined ? sv2.rate : (inf?.rate || 10),
+                tdsAmount: sv2.tdsAmount !== undefined ? sv2.tdsAmount : (inf ? Math.round(totalAmt * inf.rate / 100) : 0),
+                pan: sv2.pan || "", note: sv2.note || "",
+              };
+            });
+          const totalAmount = vendors.reduce((s, v) => s + v.totalAmount, 0);
+          const totalTDS = vendors.filter(v => v.eligible).reduce((s, v) => s + v.tdsAmount, 0);
+          const dominantSrc = vendors.find(v => v.source !== "Journal")?.source || "Journal";
+          return { account, source: dominantSrc, totalAmount, totalTDS, vendors, isSalary };
         });
-      setRows(result); setLoading(false);
+
+      setGroups(result); setLoading(false);
     });
   }, [orgId, expenses.length, bills.length, vendorPayments.length, journals.length]);
 
-  const save = async (key: string, updates: Partial<TDSLedgerRow>) => {
-    setRows(prev => prev.map(r => {
-      if (r.key !== key) return r;
-      const u = { ...r, ...updates };
-      if (updates.rate !== undefined) u.tdsAmount = Math.round(r.totalAmount * (updates.rate / 100));
-      return u;
-    }));
-    const row = rows.find(r => r.key === key);
+  const saveVendor = async (vendorKey: string, updates: Partial<TDSVendorRow>) => {
+    setGroups(prev => prev.map(g => ({
+      ...g,
+      vendors: g.vendors.map(v => {
+        if (v.vendorKey !== vendorKey) return v;
+        const u = { ...v, ...updates };
+        if (updates.rate !== undefined) u.tdsAmount = Math.round(v.totalAmount * updates.rate / 100);
+        return u;
+      })
+    })));
+    const row = groups.flatMap(g => g.vendors).find(v => v.vendorKey === vendorKey);
     if (!row) return;
-    const payload = { ...row, ...updates };
-    await supabase.from("pending_changes").upsert({ org_id: orgId, module: "tds_ledger", action: "update", record_id: key, payload, status: "saved" }, { onConflict: "org_id,module,record_id" });
+    await supabase.from("pending_changes").upsert({ org_id: orgId, module: "tds_ledger", action: "update", record_id: vendorKey, payload: { ...row, ...updates }, status: "saved" }, { onConflict: "org_id,module,record_id" });
     setSaved(true); setTimeout(() => setSaved(false), 1500);
   };
 
-  const eligible = rows.filter(r => r.eligible);
-  const totalTDS = eligible.reduce((s, r) => s + r.tdsAmount, 0);
-  const missingPAN = eligible.filter(r => !r.pan).length;
-  const TDS_SECTIONS = ["192","194A","194C","194D","194G","194H","194I","194IB","194J","194K","194M","194N","194O","194Q","195","206AA"];
+  const nonSalaryGroups = groups.filter(g => !g.isSalary);
+  const salaryGroups = groups.filter(g => g.isSalary);
+  const activeGroups = activeTab === "tds" ? nonSalaryGroups : salaryGroups;
+  const nonSalaryTDS = nonSalaryGroups.flatMap(g => g.vendors).filter(v => v.eligible).reduce((s, v) => s + v.tdsAmount, 0);
+  const salaryTDS = salaryGroups.flatMap(g => g.vendors).filter(v => v.eligible).reduce((s, v) => s + v.tdsAmount, 0);
+  const allEligible = groups.flatMap(g => g.vendors).filter(v => v.eligible);
+  const missingPAN = allEligible.filter(v => !v.pan).length;
+  const TDS_SECTIONS = ["192","194A","194C","194D","194H","194I","194IB","194J","194K","194M","194N","194O","194Q","195","206AA"];
 
-  if (loading) return <div className="text-center py-10 text-zinc-400 text-sm">Building ledger summary...</div>;
+  if (loading) return <div className="text-center py-16 text-zinc-400">Building TDS ledger from your data...</div>;
+
+  const SourceTag = ({ src }: { src: string }) => {
+    const map: Record<string,string> = { Expense:"bg-emerald-50 text-emerald-700 border-emerald-200", Bill:"bg-sky-50 text-sky-700 border-sky-200", Journal:"bg-violet-50 text-violet-700 border-violet-200", VendorPmt:"bg-orange-50 text-orange-700 border-orange-200" };
+    return <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold ${map[src]||"bg-zinc-50 text-zinc-500 border-zinc-200"}`}>{src.toUpperCase()}</span>;
+  };
 
   return (
     <div className="space-y-4">
+      {/* Summary */}
       <div className="grid grid-cols-4 gap-3">
-        <Card label="Total Ledgers" value={String(rows.length)} />
-        <Card label="TDS Eligible" value={String(eligible.length)} color="text-violet-600" />
-        <Card label="Total TDS Liability" value={inr(totalTDS)} color="text-violet-600" />
-        <Card label="Missing PAN" value={String(missingPAN)} color={missingPAN > 0 ? "text-red-600" : "text-emerald-600"} />
-      </div>
-      <div className="bg-violet-50 border border-violet-200 rounded-xl p-3 flex items-center justify-between">
-        <p className="text-xs text-violet-700">Click any ledger row to expand individual transactions. Toggle YES/NO to mark TDS eligibility. PAN is saved permanently.</p>
-        {saved && <span className="text-xs text-emerald-600 font-bold">✓ Saved</span>}
+        <Card label="Non-Salary TDS (26Q)" value={inr(nonSalaryTDS)} color="text-violet-700" />
+        <Card label="Salary TDS (24Q)" value={inr(salaryTDS)} color="text-blue-700" />
+        <Card label="Total TDS Liability" value={inr(nonSalaryTDS + salaryTDS)} />
+        <Card label="PAN Missing" value={String(missingPAN)} color={missingPAN > 0 ? "text-red-600" : "text-emerald-600"} />
       </div>
 
-      <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden shadow-sm">
-        <div className="grid grid-cols-12 gap-2 px-4 py-2.5 bg-zinc-50 border-b border-zinc-200 text-xs font-semibold text-zinc-500 uppercase tracking-wide">
-          <div className="col-span-3">Ledger / Account</div>
-          <div className="col-span-1 text-right">Txns</div>
-          <div className="col-span-1 text-right">Total Paid</div>
-          <div className="col-span-1 text-center">TDS?</div>
-          <div className="col-span-1 text-center">Section</div>
-          <div className="col-span-1 text-right">Rate%</div>
-          <div className="col-span-1 text-right">TDS ₹</div>
-          <div className="col-span-2">PAN</div>
-          <div className="col-span-1">Note</div>
+      {/* Tabs */}
+      <div className="flex gap-1 bg-white border border-zinc-200 rounded-xl p-1 shadow-sm w-fit">
+        {([["tds", `Non-Salary TDS — Form 26Q (${nonSalaryGroups.length})`, "bg-violet-600"], ["salary", `Salary TDS — Form 24Q (${salaryGroups.length})`, "bg-blue-600"]] as [string,string,string][]).map(([id, label, color]) => (
+          <button key={id} onClick={() => setActiveTab(id as "tds"|"salary")}
+            className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === id ? `${color} text-white shadow-sm` : "text-zinc-500 hover:text-zinc-800"}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "salary" && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex gap-3">
+          <span className="text-blue-500 text-lg">ℹ</span>
+          <div>
+            <p className="text-sm font-bold text-blue-800">Salary TDS is managed in Zoho Payroll</p>
+            <p className="text-xs text-blue-600 mt-1">Per-employee TDS, Form 16 and Form 24Q filing must be done from <strong>Zoho Payroll → Tax → TDS</strong>. Data below is from payroll journals — for cross-reference only, do not use for filing.</p>
+          </div>
         </div>
+      )}
 
-        {rows.map(row => (
-          <div key={row.key} className={`border-b border-zinc-100 last:border-0 ${row.eligible ? "" : "opacity-60"}`}>
-            <div
-              className={`grid grid-cols-12 gap-2 px-4 py-3 items-center cursor-pointer transition-colors ${expanded === row.key ? "bg-violet-50" : "hover:bg-zinc-50"}`}
-              onClick={() => setExpanded(expanded === row.key ? null : row.key)}>
-              <div className="col-span-3 flex items-center gap-2 min-w-0">
-                <span className="text-zinc-400 text-xs flex-shrink-0">{expanded === row.key ? "▲" : "▼"}</span>
-                <div className="min-w-0">
-                  <p className="font-semibold text-zinc-900 text-sm" title={row.account}>{row.account}</p>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${row.source==="Bill"?"bg-blue-100 text-blue-700":row.source==="Expense"?"bg-emerald-100 text-emerald-700":row.source==="Journal"?"bg-purple-100 text-purple-700":"bg-zinc-100 text-zinc-500"}`}>{row.source}</span>
+      {activeTab === "tds" && (
+        <div className="flex items-center justify-between bg-white border border-zinc-200 rounded-xl px-4 py-3">
+          <p className="text-xs text-zinc-500"><strong className="text-zinc-800">Click ledger</strong> → vendors · <strong className="text-zinc-800">Click vendor</strong> → transactions · Set TDS section, rate, PAN per vendor</p>
+          {saved && <span className="text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1 rounded-full font-semibold">✓ Saved</span>}
+        </div>
+      )}
+
+      {/* Ledger groups */}
+      <div className="space-y-2">
+        {activeGroups.map(group => {
+          const isOpen = expandedLedger === group.account;
+          const groupEligible = group.vendors.filter(v => v.eligible);
+          const groupTDS = groupEligible.reduce((s, v) => s + v.tdsAmount, 0);
+          return (
+            <div key={group.account} className="bg-white border border-zinc-200 rounded-xl overflow-hidden shadow-sm">
+              <div className={`flex items-center justify-between px-5 py-4 cursor-pointer select-none transition-colors ${isOpen ? "bg-zinc-50 border-b border-zinc-200" : "hover:bg-zinc-50"}`}
+                onClick={() => setExpandedLedger(isOpen ? null : group.account)}>
+                <div className="flex items-center gap-3">
+                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm font-bold ${isOpen ? "bg-zinc-900 text-white" : "bg-zinc-100 text-zinc-500"}`}>{isOpen ? "−" : "+"}</div>
+                  <div>
+                    <p className="font-bold text-zinc-900">{group.account}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <SourceTag src={group.source} />
+                      <span className="text-xs text-zinc-400">{group.vendors.length} vendor{group.vendors.length !== 1 ? "s" : ""}</span>
+                      {groupEligible.length > 0 && <span className="text-xs font-semibold text-violet-600">{groupEligible.length} liable</span>}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="font-bold text-zinc-900">{inr(group.totalAmount)}</p>
+                  {groupTDS > 0 ? <p className="text-xs font-semibold text-violet-600">TDS {inr(groupTDS)}</p> : <p className="text-xs text-zinc-400">No TDS marked</p>}
                 </div>
               </div>
-              <div className="col-span-1 text-right text-zinc-500 text-sm">{row.transactions.length}</div>
-              <div className="col-span-1 text-right font-semibold text-zinc-800 text-sm">{inr(row.totalAmount)}</div>
-              <div className="col-span-1 text-center" onClick={e => e.stopPropagation()}>
-                <button onClick={() => save(row.key, { eligible: !row.eligible })}
-                  className={`text-xs px-2 py-0.5 rounded-full font-bold border transition ${row.eligible ? "bg-violet-600 text-white border-violet-600" : "bg-white text-zinc-400 border-zinc-300 hover:border-violet-400"}`}>
-                  {row.eligible ? "YES" : "NO"}
-                </button>
-              </div>
-              <div className="col-span-1 text-center" onClick={e => e.stopPropagation()}>
-                {row.eligible ? (
-                  <select value={row.sec} onChange={e => save(row.key, { sec: e.target.value })}
-                    className="text-xs border border-zinc-200 rounded px-1 py-0.5 font-mono font-bold text-violet-700 bg-white focus:outline-none w-full">
-                    {TDS_SECTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                ) : <span className="text-zinc-300 text-xs">—</span>}
-              </div>
-              <div className="col-span-1 text-right" onClick={e => e.stopPropagation()}>
-                {row.eligible ? (
-                  <input type="number" value={row.rate} onChange={e => save(row.key, { rate: Number(e.target.value) })}
-                    className="w-12 text-xs border border-zinc-200 rounded px-1 py-0.5 text-right focus:outline-none focus:border-violet-500" />
-                ) : <span className="text-zinc-300 text-xs">—</span>}
-              </div>
-              <div className="col-span-1 text-right" onClick={e => e.stopPropagation()}>
-                {row.eligible ? (
-                  <input type="number" value={row.tdsAmount} onChange={e => save(row.key, { tdsAmount: Number(e.target.value) })}
-                    className="w-20 text-xs border border-zinc-200 rounded px-1 py-0.5 text-right font-bold text-violet-700 focus:outline-none focus:border-violet-500" />
-                ) : <span className="text-zinc-300 text-xs">—</span>}
-              </div>
-              <div className="col-span-2" onClick={e => e.stopPropagation()}>
-                <input value={row.pan} onChange={e => save(row.key, { pan: e.target.value.toUpperCase() })}
-                  placeholder="AAAAA0000A" maxLength={10}
-                  className={`w-full text-xs border rounded px-2 py-0.5 font-mono uppercase focus:outline-none ${row.eligible && !row.pan ? "border-red-300 bg-red-50 placeholder-red-300" : "border-zinc-200"}`} />
-              </div>
-              <div className="col-span-1" onClick={e => e.stopPropagation()}>
-                <input value={row.note} onChange={e => save(row.key, { note: e.target.value })}
-                  placeholder="Note" className="w-full text-xs border border-zinc-200 rounded px-1.5 py-0.5 focus:outline-none" />
-              </div>
+
+              {isOpen && (
+                <div className="divide-y divide-zinc-100">
+                  {group.vendors.map(vendor => {
+                    const vKey = vendor.vendorKey;
+                    const isVOpen = expandedVendor === vKey;
+                    return (
+                      <div key={vKey} className={!vendor.eligible ? "bg-zinc-50/60 opacity-60" : ""}>
+                        <div className="px-5 py-4">
+                          <div className="flex items-start gap-3 flex-wrap">
+                            <button onClick={() => setExpandedVendor(isVOpen ? null : vKey)}
+                              className={`mt-1 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${isVOpen ? "bg-zinc-900 text-white" : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200"}`}>
+                              {isVOpen ? "−" : "+"}
+                            </button>
+                            <div className="flex-1 min-w-[120px]">
+                              <p className="font-semibold text-zinc-900 text-sm">{vendor.vendor}</p>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <SourceTag src={vendor.source} />
+                                <span className="text-xs text-zinc-400">{vendor.transactions.length} txns · {inr(vendor.totalAmount)}</span>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                              <button onClick={() => saveVendor(vKey, { eligible: !vendor.eligible })}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${vendor.eligible ? "bg-violet-600 text-white border-violet-600" : "bg-white text-zinc-400 border-zinc-200 hover:border-zinc-400"}`}>
+                                <span className={`w-1.5 h-1.5 rounded-full ${vendor.eligible ? "bg-white" : "bg-zinc-300"}`} />
+                                {vendor.eligible ? "TDS Applicable" : "No TDS"}
+                              </button>
+                              {vendor.eligible && <>
+                                <select value={vendor.sec} onChange={e => saveVendor(vKey, { sec: e.target.value })}
+                                  className="text-xs border border-zinc-200 rounded-lg px-2 py-1.5 font-mono font-bold text-violet-700 bg-white focus:outline-none">
+                                  {TDS_SECTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                                </select>
+                                <div className="flex items-center gap-1 bg-zinc-50 border border-zinc-200 rounded-lg px-2 py-1.5">
+                                  <input type="number" value={vendor.rate} onChange={e => saveVendor(vKey, { rate: Number(e.target.value) })}
+                                    className="w-10 text-xs text-right font-bold bg-transparent focus:outline-none" />
+                                  <span className="text-xs text-zinc-400">%</span>
+                                </div>
+                                <div className="flex items-center gap-1 bg-violet-50 border border-violet-200 rounded-lg px-2 py-1.5">
+                                  <span className="text-xs text-violet-400">₹</span>
+                                  <input type="number" value={vendor.tdsAmount} onChange={e => saveVendor(vKey, { tdsAmount: Number(e.target.value) })}
+                                    className="w-20 text-xs text-right font-bold text-violet-700 bg-transparent focus:outline-none" />
+                                </div>
+                              </>}
+                              <div>
+                                <input value={vendor.pan} onChange={e => saveVendor(vKey, { pan: e.target.value.toUpperCase() })}
+                                  placeholder="Enter PAN" maxLength={10}
+                                  className={`w-32 text-xs border rounded-lg px-2.5 py-1.5 font-mono uppercase tracking-wider focus:outline-none ${vendor.eligible && !vendor.pan ? "border-red-300 bg-red-50 text-red-800 placeholder-red-300" : "border-zinc-200 bg-white"}`} />
+                                {vendor.eligible && !vendor.pan && <p className="text-[10px] text-red-500 mt-0.5 text-center">⚠ Required</p>}
+                              </div>
+                              <input value={vendor.note} onChange={e => saveVendor(vKey, { note: e.target.value })}
+                                placeholder="Remarks" className="w-28 text-xs border border-zinc-200 rounded-lg px-2.5 py-1.5 focus:outline-none text-zinc-600 bg-white" />
+                            </div>
+                          </div>
+                        </div>
+                        {isVOpen && (
+                          <div className="mx-5 mb-4 border border-zinc-200 rounded-xl overflow-hidden">
+                            <div className="bg-zinc-900 px-4 py-3 flex items-center justify-between">
+                              <p className="text-xs font-semibold text-white">{vendor.vendor}</p>
+                              {vendor.eligible && <p className="text-xs text-zinc-300">Sec {vendor.sec} @{vendor.rate}% = <span className="text-white font-bold">{inr(vendor.tdsAmount)}</span></p>}
+                            </div>
+                            <table className="w-full text-xs bg-white">
+                              <thead><tr className="border-b border-zinc-100 text-zinc-400 uppercase text-[10px]">
+                                <th className="text-left px-4 py-2.5">Date</th>
+                                <th className="text-left px-4 py-2.5">Reference</th>
+                                <th className="text-center px-4 py-2.5">Source</th>
+                                <th className="text-right px-4 py-2.5">Amount</th>
+                                <th className="text-right px-4 py-2.5">TDS Due</th>
+                              </tr></thead>
+                              <tbody>
+                                {vendor.transactions.sort((a,b)=>(b.date||"").localeCompare(a.date||"")).map((t,i) => (
+                                  <tr key={i} className="border-b border-zinc-50 last:border-0 hover:bg-zinc-50">
+                                    <td className="px-4 py-2.5 text-zinc-600">{fdate(t.date)}</td>
+                                    <td className="px-4 py-2.5 font-mono text-zinc-500">{t.ref}</td>
+                                    <td className="px-4 py-2.5 text-center"><SourceTag src={t.source} /></td>
+                                    <td className="px-4 py-2.5 text-right font-semibold text-zinc-900">{inr(t.amount)}</td>
+                                    <td className="px-4 py-2.5 text-right font-bold text-violet-600">{vendor.eligible ? inr(Math.round(t.amount * vendor.rate / 100)) : <span className="text-zinc-300">—</span>}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                              <tfoot><tr className="bg-zinc-50 border-t-2 border-zinc-200">
+                                <td colSpan={3} className="px-4 py-2.5 font-bold text-zinc-700">Total</td>
+                                <td className="px-4 py-2.5 text-right font-bold text-zinc-900">{inr(vendor.totalAmount)}</td>
+                                <td className="px-4 py-2.5 text-right font-bold text-violet-700">{vendor.eligible ? inr(vendor.tdsAmount) : <span className="text-zinc-300">—</span>}</td>
+                              </tr></tfoot>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
+          );
+        })}
+      </div>
 
-            {expanded === row.key && (
-              <div className="border-t border-violet-100 bg-violet-50/40 px-8 py-4">
-                <p className="text-xs font-semibold text-violet-700 uppercase tracking-wide mb-3">
-                  {row.transactions.length} Transactions · {row.account}
-                  {row.eligible && <span className="ml-3 text-zinc-500 font-normal normal-case">Section {row.sec} @{row.rate}% → TDS {inr(row.tdsAmount)}</span>}
-                </p>
-                <table className="w-full text-xs">
-                  <thead><tr className="border-b border-violet-200 text-violet-500 uppercase tracking-wide">
-                    <th className="text-left pb-1.5 pr-4">Date</th>
-                    <th className="text-left pb-1.5 pr-4">Vendor / Party</th>
-                    <th className="text-left pb-1.5 pr-4">Reference</th>
-                    <th className="text-center pb-1.5 pr-4">Source</th>
-                    <th className="text-right pb-1.5 pr-4">Amount</th>
-                    <th className="text-right pb-1.5">TDS Due</th>
-                  </tr></thead>
-                  <tbody>
-                    {row.transactions.sort((a,b) => (b.date||"").localeCompare(a.date||"")).map((t, i) => (
-                      <tr key={i} className="border-b border-violet-100 last:border-0 hover:bg-violet-50">
-                        <td className="py-1.5 pr-4 text-zinc-600 whitespace-nowrap">{fdate(t.date)}</td>
-                        <td className="py-1.5 pr-4 text-zinc-700 font-medium">{t.vendor}</td>
-                        <td className="py-1.5 pr-4 font-mono text-zinc-400">{t.ref}</td>
-                        <td className="py-1.5 pr-4 text-center">
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded ${t.source==="Bill"?"bg-blue-100 text-blue-700":t.source==="Expense"?"bg-emerald-100 text-emerald-700":t.source==="Journal"?"bg-purple-100 text-purple-700":"bg-zinc-100 text-zinc-500"}`}>{t.source}</span>
-                        </td>
-                        <td className="py-1.5 pr-4 text-right font-medium text-zinc-800">{inr(t.amount)}</td>
-                        <td className="py-1.5 text-right font-bold text-violet-600">{row.eligible ? inr(Math.round(t.amount * row.rate / 100)) : "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot><tr className="border-t-2 border-violet-200 font-bold">
-                    <td colSpan={4} className="py-2 text-violet-700">Total</td>
-                    <td className="py-2 text-right text-violet-700">{inr(row.totalAmount)}</td>
-                    <td className="py-2 text-right text-violet-600">{row.eligible ? inr(row.tdsAmount) : "—"}</td>
-                  </tr></tfoot>
-                </table>
-              </div>
-            )}
+      {/* Footer */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-zinc-900 rounded-xl px-6 py-5 flex items-center justify-between">
+          <div>
+            <p className="text-xs text-zinc-400 uppercase tracking-wider font-semibold">Form 26Q — Non-Salary TDS</p>
+            <p className="font-black text-2xl mt-1 text-white">{inr(nonSalaryTDS)}</p>
+            <p className="text-xs mt-1">{nonSalaryGroups.flatMap(g=>g.vendors).filter(v=>v.eligible&&!v.pan).length > 0 ? <span className="text-yellow-400">⚠ PAN missing</span> : <span className="text-emerald-400">✓ All PAN captured</span>}</p>
           </div>
-        ))}
-
-        {eligible.length > 0 && (
-          <div className="grid grid-cols-12 gap-2 px-4 py-3 bg-zinc-50 border-t-2 border-zinc-300 font-bold text-sm">
-            <div className="col-span-3 text-zinc-700">Total TDS Liability</div>
-            <div className="col-span-5"></div>
-            <div className="col-span-1 text-right text-violet-700">{inr(totalTDS)}</div>
-            <div className="col-span-3 text-xs text-red-500 flex items-center">{missingPAN > 0 ? `⚠ ${missingPAN} PAN missing` : "✓ All PAN captured"}</div>
+          <span className="text-3xl opacity-20">📋</span>
+        </div>
+        <div className="bg-blue-600 rounded-xl px-6 py-5 flex items-center justify-between">
+          <div>
+            <p className="text-xs text-blue-200 uppercase tracking-wider font-semibold">Form 24Q — Salary TDS</p>
+            <p className="font-black text-2xl mt-1 text-white">{inr(salaryTDS)}</p>
+            <p className="text-xs text-blue-200 mt-1">Manage per-employee in Zoho Payroll</p>
           </div>
-        )}
+          <span className="text-3xl opacity-20">💰</span>
+        </div>
       </div>
     </div>
   );

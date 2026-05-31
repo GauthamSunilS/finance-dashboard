@@ -40,7 +40,7 @@ type Expense = { id: string; expense_number: string | null; account_name: string
 type Bill = { id: string; bill_number: string; vendor_name: string; status: string; date: string; due_date: string | null; total: number; balance: number; currency_code: string | null; purchaseorder_id: string | null };
 type PurchaseOrder = { id: string; purchaseorder_number: string; vendor_name: string; status: string; date: string; total: number; billed_status: string | null; received_status: string | null; currency_code: string | null };
 type VendorPayment = { id: string; payment_number: string | null; vendor_name: string; amount: number; date: string; payment_mode: string | null; currency_code: string | null };
-type Journal = { id: string; journal_date: string; entry_number: string | null; notes: string | null; total: number; line_items: string | null };
+type Journal = { id: string; journal_date: string; entry_number: string | null; notes: string | null; total: number; line_items: string | null; currency_code: string | null; };
 
 type Module = "accounting" | "audit" | "compliance";
 type AcctSection = "invoices" | "sales_orders" | "estimates" | "payments" | "expenses" | "purchases" | "bills" | "vendor_payments" | "journals";
@@ -1529,7 +1529,7 @@ function AuditModule({ orgId, initSection = "" }: { orgId: string; initSection?:
                 account_name: l.account_name || "", vendor_name: l.contact_name || l.customer_name || "",
                 status: "published", date: j.journal_date,
                 total: Number(l.amount || l.debit || 0), sub_total: Number(l.amount || l.debit || 0),
-                tax_total: 0, currency_code: j.currency_code || "INR",
+                tax_total: 0, currency_code: (j as any).currency_code || "INR",
                 description: j.notes,
               } as Expense));
           } catch { return []; }

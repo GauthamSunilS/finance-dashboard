@@ -1128,6 +1128,7 @@ function LedgerTDSTracker({ expenses, bills, journals, orgId, fyProp, quarterPro
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
 
   React.useEffect(() => {
+    setLoading(true);
     supabase.from("pending_changes").select("*")
       .eq("org_id", orgId).eq("module", "tds_ledger")
       .then(({ data: sv }) => {
@@ -1181,7 +1182,7 @@ function LedgerTDSTracker({ expenses, bills, journals, orgId, fyProp, quarterPro
         setRows([...bRows, ...eRows, ...jRows]);
         setLoading(false);
       });
-  }, [orgId]);
+  }, [orgId, expenses.length, bills.length, journals.length, fyProp, quarterProp]);
 
   const update = (id: string, field: string, value: any) => {
     setRows(prev => prev.map(r => {

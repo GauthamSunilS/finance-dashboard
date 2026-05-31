@@ -1092,105 +1092,138 @@ type TDSTxnRow = {
   id: string; date: string; vendor: string; account: string; amount: number;
   ref: string; source: "Bill" | "Expense";
   tdsApplicable: boolean; sec: string; rate: number; tdsAmount: number;
-  pan: string; manualTds: boolean;
+  pan: string; manualTds: boolean; saved: boolean;
 };
 
 const SALARY_KW = ["salary","payroll","wages","employee wages","net salary","staff salary"];
 const isSalaryAcct = (s: string) => SALARY_KW.some(k => s.toLowerCase().includes(k));
+const getQuarter = (date: string) => {
+  const m = new Date(date).getMonth();
+  if (m >= 3 && m <= 5) return "Q1 (Apr-Jun)";
+  if (m >= 6 && m <= 8) return "Q2 (Jul-Sep)";
+  if (m >= 9 && m <= 11) return "Q3 (Oct-Dec)";
+  return "Q4 (Jan-Mar)";
+};
 
-function LedgerTDSTracker({ expenses, bills, vendorPayments, journals, orgId }: {
+function LedgerTDSTracker({ expenses, bills, orgId }: {
   expenses: Expense[]; bills: Bill[]; vendorPayments: VendorPayment[]; journals: Journal[]; orgId: string;
 }) {
   const [rows, setRows] = React.useState<TDSTxnRow[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [activeTab, setActiveTab] = React.useState<"bills" | "expenses">("bills");
-  const [saved, setSaved] = React.useState(false);
+  const [quarter, setQuarter] = React.useState("All");
+  const [saving, setSaving] = React.useState<string | null>(null);
+  const [saveMsg, setSaveMsg] = React.useState("");
 
   React.useEffect(() => {
-    // Only load once on mount
-    supabase.from("pending_changes").select("*").eq("org_id", orgId).eq("module", "tds_ledger").then(({ data: sv }) => {
-      const savedMap: Record<string, any> = {};
-      for (const s of (sv || [])) savedMap[s.record_id || ""] = s.payload;
+    supabase.from("pending_changes").select("*")
+      .eq("org_id", orgId).eq("module", "tds_ledger")
+      .then(({ data: sv }) => {
+        const savedMap: Record<string, any> = {};
+        for (const s of (sv || [])) savedMap[s.record_id || ""] = s.payload;
 
-      const makeRow = (id: string, date: string, vendor: string, account: string, amount: number, ref: string, source: "Bill" | "Expense"): TDSTxnRow => {
-        const key = `txn||${source}||${id}`;
-        const sv2 = savedMap[key] || {};
-        const inf = inferTds(vendor, account, amount);
-        const defaultApplicable = inf !== null && !isSalaryAcct(account);
-        return {
-          id, date, vendor: vendor || "—", account: account || "—", amount, ref, source,
-          tdsApplicable: sv2.tdsApplicable !== undefined ? sv2.tdsApplicable : defaultApplicable,
-          sec: sv2.sec || inf?.sec || "194J",
-          rate: sv2.rate !== undefined ? sv2.rate : (inf?.rate || 10),
-          tdsAmount: sv2.tdsAmount !== undefined ? sv2.tdsAmount : (inf && defaultApplicable ? Math.round(amount * inf.rate / 100) : 0),
-          pan: sv2.pan || "",
-          manualTds: sv2.manualTds || false,
+        const makeRow = (id: string, date: string, vendor: string, account: string, amount: number, ref: string, source: "Bill" | "Expense"): TDSTxnRow => {
+          const key = `txn||${source}||${id}`;
+          const sv2 = savedMap[key];
+          if (sv2) {
+            // Restore fully from saved
+            return { id, date, vendor: vendor||"—", account: account||"—", amount, ref, source, ...sv2, saved: true };
+          }
+          // Default inference
+          const inf = isSalaryAcct(account) ? null : inferTds(vendor, account, amount);
+          return {
+            id, date, vendor: vendor||"—", account: account||"—", amount, ref, source,
+            tdsApplicable: inf !== null,
+            sec: inf?.sec || "194J",
+            rate: inf?.rate || 10,
+            tdsAmount: inf ? Math.round(amount * inf.rate / 100) : 0,
+            pan: "", manualTds: false, saved: false,
+          };
         };
-      };
 
-      const billRows = bills.map(b => makeRow(b.id, b.date, b.vendor_name||"", b.vendor_name||"", b.total, b.bill_number||b.id.slice(-8), "Bill"));
-      const expRows = expenses.map(e => makeRow(e.id, e.date, e.vendor_name||"", e.account_name||"", e.total, e.expense_number||e.id.slice(-8), "Expense"));
-
-      setRows([...billRows, ...expRows]);
-      setLoading(false);
-    });
+        const bRows = bills.map(b => makeRow(b.id, b.date, b.vendor_name||"", b.vendor_name||"", b.total, b.bill_number||b.id.slice(-8), "Bill"));
+        const eRows = expenses.map(e => makeRow(e.id, e.date, e.vendor_name||"", e.account_name||"", e.total, e.expense_number||e.id.slice(-8), "Expense"));
+        setRows([...bRows, ...eRows]);
+        setLoading(false);
+      });
   }, [orgId]);
-
-  const save = async (id: string, source: string, row: TDSTxnRow) => {
-    const key = `txn||${source}||${id}`;
-    await supabase.from("pending_changes").upsert({ org_id: orgId, module: "tds_ledger", action: "update", record_id: key, payload: row, status: "saved" }, { onConflict: "org_id,module,record_id" });
-    setSaved(true); setTimeout(() => setSaved(false), 1500);
-  };
 
   const update = (id: string, field: string, value: any) => {
     setRows(prev => prev.map(r => {
       if (r.id !== id) return r;
-      const u: TDSTxnRow = { ...r, [field]: value };
+      const u: TDSTxnRow = { ...r, [field]: value, saved: false };
       if (field === "rate") { u.tdsAmount = Math.round(r.amount * value / 100); u.manualTds = false; }
       if (field === "tdsAmount") u.manualTds = true;
       if (field === "tdsApplicable") { u.tdsAmount = value ? Math.round(r.amount * r.rate / 100) : 0; u.manualTds = false; }
-      save(id, r.source, u);  // pass full updated row
       return u;
     }));
   };
 
+  const saveRow = async (row: TDSTxnRow) => {
+    setSaving(row.id);
+    const key = `txn||${row.source}||${row.id}`;
+    const { tdsApplicable, sec, rate, tdsAmount, pan, manualTds } = row;
+    await supabase.from("pending_changes").upsert({
+      org_id: orgId, module: "tds_ledger", action: "update",
+      record_id: key,
+      payload: { id: row.id, date: row.date, vendor: row.vendor, account: row.account, amount: row.amount, ref: row.ref, source: row.source, tdsApplicable, sec, rate, tdsAmount, pan, manualTds },
+      status: "saved"
+    }, { onConflict: "org_id,module,record_id" });
+    setRows(prev => prev.map(r => r.id === row.id ? { ...r, saved: true } : r));
+    setSaving(null);
+    setSaveMsg("✓ Saved");
+    setTimeout(() => setSaveMsg(""), 2000);
+  };
+
+  const quarters = ["All", "Q1 (Apr-Jun)", "Q2 (Jul-Sep)", "Q3 (Oct-Dec)", "Q4 (Jan-Mar)"];
   const billRows = rows.filter(r => r.source === "Bill");
   const expRows = rows.filter(r => r.source === "Expense");
-  const activeRows = activeTab === "bills" ? billRows : expRows;
-  const billTDS = billRows.filter(r => r.tdsApplicable).reduce((s, r) => s + r.tdsAmount, 0);
-  const expTDS = expRows.filter(r => r.tdsApplicable).reduce((s, r) => s + r.tdsAmount, 0);
+  const activeRows = (activeTab === "bills" ? billRows : expRows)
+    .filter(r => quarter === "All" || getQuarter(r.date) === quarter)
+    .sort((a, b) => (b.date||"").localeCompare(a.date||""));
+
+  const billTDS = billRows.filter(r => r.tdsApplicable && r.saved).reduce((s, r) => s + r.tdsAmount, 0);
+  const expTDS = expRows.filter(r => r.tdsApplicable && r.saved).reduce((s, r) => s + r.tdsAmount, 0);
   const activeTDS = activeRows.filter(r => r.tdsApplicable).reduce((s, r) => s + r.tdsAmount, 0);
-  const missingPAN = rows.filter(r => r.tdsApplicable && !r.pan).length;
+  const missingPAN = activeRows.filter(r => r.tdsApplicable && !r.pan).length;
+  const unsavedCount = activeRows.filter(r => !r.saved && r.tdsApplicable).length;
 
   const TDS_SECTIONS = ["194A","194C","194D","194H","194I","194IB","194J","194K","194M","194Q","195","206AA"];
 
-  if (loading) return <div className="text-center py-16 text-zinc-400 text-sm">Loading TDS data...</div>;
-
-  const SourceTag = ({ src }: { src: string }) => (
-    <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold ${src === "Bill" ? "bg-sky-50 text-sky-700 border-sky-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`}>{src.toUpperCase()}</span>
-  );
+  if (loading) return <div className="text-center py-16 text-zinc-400 text-sm animate-pulse">Loading TDS data...</div>;
 
   return (
     <div className="space-y-4">
       {/* Summary cards */}
       <div className="grid grid-cols-4 gap-3">
-        <Card label="Bills TDS (26Q)" value={inr(billTDS)} color="text-sky-700" />
-        <Card label="Expenses TDS (26Q)" value={inr(expTDS)} color="text-emerald-700" />
-        <Card label="Total TDS Liability" value={inr(billTDS + expTDS)} />
+        <Card label="Bills TDS (Saved)" value={inr(billTDS)} color="text-sky-700" />
+        <Card label="Expenses TDS (Saved)" value={inr(expTDS)} color="text-emerald-700" />
+        <Card label="Total TDS (26Q)" value={inr(billTDS + expTDS)} />
         <Card label="PAN Missing" value={String(missingPAN)} color={missingPAN > 0 ? "text-red-600" : "text-emerald-600"} />
       </div>
 
-      {/* Tabs */}
-      <div className="flex items-center justify-between">
+      {/* Controls */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex gap-1 bg-white border border-zinc-200 rounded-xl p-1 shadow-sm">
           {([["bills", `Bills (${billRows.length})`, "bg-sky-600"], ["expenses", `Expenses (${expRows.length})`, "bg-emerald-600"]] as [string,string,string][]).map(([id, label, color]) => (
-            <button key={id} onClick={() => setActiveTab(id as "bills" | "expenses")}
-              className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === id ? `${color} text-white shadow-sm` : "text-zinc-500 hover:text-zinc-800"}`}>
+            <button key={id} onClick={() => setActiveTab(id as "bills"|"expenses")}
+              className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === id ? `${color} text-white shadow-sm` : "text-zinc-500 hover:text-zinc-800"}`}>
               {label}
             </button>
           ))}
         </div>
-        {saved && <span className="text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1 rounded-full font-semibold">✓ Saved</span>}
+        <div className="flex items-center gap-3">
+          <select value={quarter} onChange={e => setQuarter(e.target.value)}
+            className="text-sm border border-zinc-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:border-black">
+            {quarters.map(q => <option key={q} value={q}>{q}</option>)}
+          </select>
+          {unsavedCount > 0 && <span className="text-xs text-amber-600 font-semibold bg-amber-50 border border-amber-200 px-3 py-1 rounded-full">⚠ {unsavedCount} unsaved</span>}
+          {saveMsg && <span className="text-xs text-emerald-600 font-semibold bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full">{saveMsg}</span>}
+        </div>
+      </div>
+
+      <div className="text-xs text-zinc-500 bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5">
+        💡 Toggle TDS ON/OFF · Adjust section, rate, PAN · Click <strong className="text-zinc-700">✓ Save</strong> to confirm each row. Saved data flows into Compliance & Findings automatically.
       </div>
 
       {/* Table */}
@@ -1202,36 +1235,50 @@ function LedgerTDSTracker({ expenses, bills, vendorPayments, journals, orgId }: 
                 <th className="text-left px-4 py-3 whitespace-nowrap">Date</th>
                 <th className="text-left px-4 py-3">Vendor</th>
                 <th className="text-left px-4 py-3">Account / Ledger</th>
-                <th className="text-right px-4 py-3 whitespace-nowrap">Amount</th>
-                <th className="text-center px-4 py-3 whitespace-nowrap">TDS?</th>
+                <th className="text-right px-4 py-3">Amount</th>
+                <th className="text-center px-4 py-3">TDS?</th>
                 <th className="text-center px-4 py-3">Section</th>
                 <th className="text-right px-4 py-3">Rate</th>
-                <th className="text-right px-4 py-3 whitespace-nowrap">TDS ₹</th>
+                <th className="text-right px-4 py-3">TDS ₹</th>
                 <th className="text-left px-4 py-3">PAN</th>
-                <th className="text-left px-4 py-3">Ref</th>
+                <th className="text-center px-4 py-3">Save</th>
               </tr>
             </thead>
             <tbody>
-              {activeRows.sort((a,b) => (b.date||"").localeCompare(a.date||"")).map(row => (
-                <tr key={row.id} className={`border-b border-zinc-100 last:border-0 transition-colors ${row.tdsApplicable ? "hover:bg-violet-50/20" : "opacity-50 hover:bg-zinc-50"}`}>
-                  <td className="px-4 py-3 text-zinc-600 whitespace-nowrap text-xs">{fdate(row.date)}</td>
-                  <td className="px-4 py-3 font-semibold text-zinc-900">{row.vendor}</td>
-                  <td className="px-4 py-3 text-zinc-500 text-xs">{row.account}</td>
-                  <td className="px-4 py-3 text-right font-bold text-zinc-900">{inr(row.amount)}</td>
+              {activeRows.map(row => (
+                <tr key={row.id} className={`border-b border-zinc-100 last:border-0 transition-colors ${
+                  row.saved && row.tdsApplicable ? "bg-emerald-50/20" :
+                  !row.tdsApplicable ? "opacity-40 hover:opacity-60" :
+                  "hover:bg-violet-50/20"
+                }`}>
+                  <td className="px-4 py-3 text-xs text-zinc-500 whitespace-nowrap">{fdate(row.date)}</td>
+                  <td className="px-4 py-3 font-semibold text-zinc-900 text-sm max-w-[160px]">
+                    <span title={row.vendor}>{row.vendor}</span>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-zinc-500 max-w-[160px]">
+                    <span title={row.account}>{row.account}</span>
+                  </td>
+                  <td className="px-4 py-3 text-right font-bold text-zinc-900 whitespace-nowrap">{inr(row.amount)}</td>
+
+                  {/* Toggle */}
                   <td className="px-4 py-3 text-center">
                     <button onClick={() => update(row.id, "tdsApplicable", !row.tdsApplicable)}
-                      className={`w-10 h-5 rounded-full relative transition-all ${row.tdsApplicable ? "bg-violet-600" : "bg-zinc-200"}`}>
+                      className={`w-10 h-5 rounded-full relative transition-all flex-shrink-0 ${row.tdsApplicable ? "bg-violet-600" : "bg-zinc-200"}`}>
                       <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${row.tdsApplicable ? "left-5" : "left-0.5"}`} />
                     </button>
                   </td>
+
+                  {/* Section */}
                   <td className="px-4 py-3 text-center">
                     {row.tdsApplicable ? (
                       <select value={row.sec} onChange={e => update(row.id, "sec", e.target.value)}
-                        className="text-xs border border-zinc-200 rounded-lg px-2 py-1 font-mono font-bold text-violet-700 bg-white focus:outline-none focus:border-violet-400">
+                        className="text-xs border border-zinc-200 rounded-lg px-1.5 py-1 font-mono font-bold text-violet-700 bg-white focus:outline-none focus:border-violet-400">
                         {TDS_SECTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                       </select>
                     ) : <span className="text-zinc-300">—</span>}
                   </td>
+
+                  {/* Rate */}
                   <td className="px-4 py-3 text-right">
                     {row.tdsApplicable ? (
                       <div className="flex items-center justify-end gap-0.5">
@@ -1241,50 +1288,60 @@ function LedgerTDSTracker({ expenses, bills, vendorPayments, journals, orgId }: 
                       </div>
                     ) : <span className="text-zinc-300">—</span>}
                   </td>
+
+                  {/* TDS Amount */}
                   <td className="px-4 py-3 text-right">
                     {row.tdsApplicable ? (
                       <div className="relative">
-                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-violet-400">₹</span>
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-violet-400">₹</span>
                         <input type="number" value={row.tdsAmount} onChange={e => update(row.id, "tdsAmount", Number(e.target.value))}
-                          className={`w-24 text-xs text-right font-bold text-violet-700 border rounded-lg pl-5 pr-2 py-1 focus:outline-none focus:border-violet-400 ${row.manualTds ? "border-amber-300 bg-amber-50" : "border-zinc-200"}`} />
-                        {row.manualTds && <span className="absolute -top-2 right-0 text-[9px] text-amber-600 font-bold bg-amber-50 px-1 rounded">edited</span>}
+                          className={`w-24 text-xs text-right font-bold text-violet-700 border rounded-lg pl-4 pr-2 py-1 focus:outline-none focus:border-violet-400 ${row.manualTds ? "border-amber-300 bg-amber-50" : "border-zinc-200"}`} />
                       </div>
                     ) : <span className="text-zinc-300">—</span>}
                   </td>
+
+                  {/* PAN */}
                   <td className="px-4 py-3">
                     {row.tdsApplicable ? (
                       <input value={row.pan} onChange={e => update(row.id, "pan", e.target.value.toUpperCase())}
                         placeholder="AAAAA0000A" maxLength={10}
-                        className={`w-28 text-xs border rounded-lg px-2 py-1 font-mono uppercase tracking-wider focus:outline-none ${!row.pan ? "border-red-300 bg-red-50 placeholder-red-300" : "border-zinc-200 focus:border-black"}`} />
+                        className={`w-28 text-xs border rounded-lg px-2 py-1 font-mono uppercase tracking-wider focus:outline-none ${
+                          !row.pan ? "border-red-300 bg-red-50 placeholder-red-300" : "border-zinc-200 focus:border-black"
+                        }`} />
                     ) : <span className="text-zinc-300 text-xs">—</span>}
                   </td>
-                  <td className="px-4 py-3 text-xs font-mono text-zinc-400">{row.ref}</td>
+
+                  {/* Save button */}
+                  <td className="px-4 py-3 text-center">
+                    {row.saved ? (
+                      <span className="text-xs text-emerald-600 font-bold">✓</span>
+                    ) : (
+                      <button onClick={() => saveRow(row)}
+                        disabled={saving === row.id}
+                        className="text-xs bg-zinc-900 text-white px-3 py-1 rounded-lg hover:bg-zinc-700 disabled:opacity-50 transition font-semibold whitespace-nowrap">
+                        {saving === row.id ? "..." : "Save"}
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
               <tr className="border-t-2 border-zinc-200 bg-zinc-50 font-bold">
                 <td colSpan={3} className="px-4 py-3 text-sm text-zinc-700">
-                  Total · {activeRows.filter(r => r.tdsApplicable).length} of {activeRows.length} transactions liable
+                  {activeRows.filter(r => r.tdsApplicable).length} of {activeRows.length} transactions liable
                 </td>
                 <td className="px-4 py-3 text-right text-zinc-900">{inr(activeRows.reduce((s,r)=>s+r.amount,0))}</td>
                 <td colSpan={3}></td>
-                <td className="px-4 py-3 text-right text-violet-700">{inr(activeTDS)}</td>
+                <td className="px-4 py-3 text-right text-violet-700 text-sm font-bold">{inr(activeTDS)}</td>
                 <td className="px-4 py-3 text-xs">
-                  {activeRows.filter(r=>r.tdsApplicable&&!r.pan).length > 0
-                    ? <span className="text-red-500">⚠ {activeRows.filter(r=>r.tdsApplicable&&!r.pan).length} PAN missing</span>
-                    : <span className="text-emerald-600">✓ All PAN</span>}
+                  {missingPAN > 0 ? <span className="text-red-500">⚠ {missingPAN} PAN missing</span> : <span className="text-emerald-600">✓ All PAN</span>}
                 </td>
                 <td></td>
               </tr>
             </tfoot>
           </table>
         </div>
-      </div>
-
-      <div className="flex items-center gap-2 text-xs text-zinc-500 bg-white border border-zinc-200 rounded-xl px-4 py-3">
-        <span>💡</span>
-        <span>TDS amount <strong className="text-zinc-700">auto-calculates</strong> from rate. Manually edit ₹ field to override — shows <span className="text-amber-600 font-semibold">edited</span>. Changing rate % resets to auto.</span>
       </div>
     </div>
   );
@@ -2026,13 +2083,17 @@ function ComplianceModule({ orgId, clientName, initSection = "" }: { orgId: stri
   const [loading, setLoading] = useState(true);
   const [fy, setFy] = useState("All");
   const [month, setMonth] = useState("All");
+  const [savedTdsRows, setSavedTdsRows] = useState<any[]>([]);
 
   useEffect(() => {
     Promise.all([
       supabase.from("finance_dashboard").select("*").eq("org_id", orgId),
       supabase.from("expenses").select("*").eq("org_id", orgId),
-    ]).then(([inv, exp]) => {
-      setInvoices(inv.data || []); setExpenses(exp.data || []); setLoading(false);
+      supabase.from("pending_changes").select("*").eq("org_id", orgId).eq("module", "tds_ledger").eq("status", "saved"),
+    ]).then(([inv, exp, tds]) => {
+      setInvoices(inv.data || []); setExpenses(exp.data || []);
+      setSavedTdsRows(tds.data || []);
+      setLoading(false);
     });
   }, [orgId]);
 
@@ -2052,20 +2113,13 @@ function ComplianceModule({ orgId, clientName, initSection = "" }: { orgId: stri
   const totalSales = filtInvoices.reduce((s, i) => s + i.total, 0);
   const totalGstOutput = filtInvoices.reduce((s, i) => s + i.tax_total, 0);
   const totalGstInput = filtExpenses.filter(e => !isBlocked(e.account_name || "", e.vendor_name || "")).reduce((s, e) => s + (e.tax_total || 0), 0);
-  // Load saved TDS tracker data (from TDS Summary in Internal Audit)
-  const [savedTdsRows, setSavedTdsRows] = React.useState<any[]>([]);
-  React.useEffect(() => {
-    supabase.from("pending_changes").select("*").eq("org_id", orgId).eq("module", "tds_ledger").eq("status", "saved")
-      .then(({ data }) => setSavedTdsRows(data || []));
-  }, [orgId]);
-
-  // Use saved TDS data if available, else fall back to inference
-  const hasSavedData = savedTdsRows.length > 0;
-  const savedLiableRows = savedTdsRows.filter(r => r.payload?.tdsApplicable);
-  const totalTdsLiability = hasSavedData
-    ? savedLiableRows.reduce((s, r) => s + (r.payload?.tdsAmount || 0), 0)
-    : filtExpenses.reduce((s, e) => { const r = inferTds(e.vendor_name || "", e.account_name || "", e.total); return s + (r ? Math.round(e.total * r.rate / 100) : 0); }, 0);
+  // TDS from inference (used as fallback)
   const tdsItems = filtExpenses.filter(e => inferTds(e.vendor_name || "", e.account_name || "", e.total));
+  const totalTdsLiability = savedTdsRows.length > 0
+    ? savedTdsRows.filter(r => r.payload?.tdsApplicable).reduce((s, r) => s + (r.payload?.tdsAmount || 0), 0)
+    : tdsItems.reduce((s, e) => { const r = inferTds(e.vendor_name || "", e.account_name || "", e.total); return s + (r ? Math.round(e.total * r.rate / 100) : 0); }, 0);
+  const savedLiableRows = savedTdsRows.filter(r => r.payload?.tdsApplicable);
+  const hasSavedData = savedTdsRows.length > 0;
   const tdsItemCount = hasSavedData ? savedLiableRows.length : tdsItems.length;
   const overdueInvoices = filtInvoices.filter(i => i.balance > 0 && i.due_date && daysDiff(i.due_date) > 0);
   const missingIRN = filtInvoices.filter(i => i.total >= 500000 && !i.reference_number);

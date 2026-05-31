@@ -1163,12 +1163,15 @@ function LedgerTDSTracker({ expenses, bills, orgId }: {
     setSaving(row.id);
     const key = `txn||${row.source}||${row.id}`;
     const { tdsApplicable, sec, rate, tdsAmount, pan, manualTds } = row;
-    await supabase.from("pending_changes").upsert({
+    // Delete existing then insert to avoid constraint issues
+    await supabase.from("pending_changes").delete()
+      .eq("org_id", orgId).eq("module", "tds_ledger").eq("record_id", key);
+    await supabase.from("pending_changes").insert({
       org_id: orgId, module: "tds_ledger", action: "update",
       record_id: key,
       payload: { id: row.id, date: row.date, vendor: row.vendor, account: row.account, amount: row.amount, ref: row.ref, source: row.source, tdsApplicable, sec, rate, tdsAmount, pan, manualTds },
       status: "saved"
-    }, { onConflict: "org_id,module,record_id" });
+    });
     setRows(prev => prev.map(r => r.id === row.id ? { ...r, saved: true } : r));
     setSaving(null);
     setSaveMsg("✓ Saved");
@@ -1760,14 +1763,16 @@ function AuditModule({ orgId, initSection = "" }: { orgId: string; initSection?:
         );
       })()}
 
-      {/* TDS Summary */}
-      {section === "tds" && <LedgerTDSTracker
-        expenses={filterByFYMonth(expenses, fy, month)}
-        bills={filterByFYMonth(bills, fy, month)}
-        vendorPayments={filterByFYMonth(vendorPayments, fy, month)}
-        journals={filterByFYMonth(journals, fy, month)}
-        orgId={orgId}
-      />}
+      {/* TDS Summary - always mounted to preserve state */}
+      <div className={section === "tds" ? "" : "hidden"}>
+        <LedgerTDSTracker
+          expenses={filterByFYMonth(expenses, fy, month)}
+          bills={filterByFYMonth(bills, fy, month)}
+          vendorPayments={filterByFYMonth(vendorPayments, fy, month)}
+          journals={filterByFYMonth(journals, fy, month)}
+          orgId={orgId}
+        />
+      </div>
 
       {/* All Findings */}
       {section === "findings" && (

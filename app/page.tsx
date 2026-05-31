@@ -1088,309 +1088,205 @@ function EditableTDSTable({ items, orgId }: { items: { exp: Expense; rule: typeo
 
 
 // ─── Ledger TDS Tracker ───────────────────────────────────────────────────────
-type TDSVendorRow = {
-  vendorKey: string; vendor: string; source: string;
-  totalAmount: number; transactions: { date: string; amount: number; ref: string; source: string }[];
-  eligible: boolean; sec: string; rate: number; tdsAmount: number; pan: string; note: string;
-};
-type TDSLedgerGroup = {
-  account: string; source: string; totalAmount: number; totalTDS: number;
-  vendors: TDSVendorRow[]; isSalary: boolean;
+type TDSTxnRow = {
+  id: string; date: string; vendor: string; account: string; amount: number;
+  ref: string; source: "Bill" | "Expense";
+  tdsApplicable: boolean; sec: string; rate: number; tdsAmount: number;
+  pan: string; manualTds: boolean;
 };
 
-const SALARY_KW = ["salary","payroll","wages","employee wages","staff salary","manpower payroll","net salary"];
+const SALARY_KW = ["salary","payroll","wages","employee wages","net salary","staff salary"];
 const isSalaryAcct = (s: string) => SALARY_KW.some(k => s.toLowerCase().includes(k));
 
 function LedgerTDSTracker({ expenses, bills, vendorPayments, journals, orgId }: {
   expenses: Expense[]; bills: Bill[]; vendorPayments: VendorPayment[]; journals: Journal[]; orgId: string;
 }) {
-  const [groups, setGroups] = React.useState<TDSLedgerGroup[]>([]);
+  const [rows, setRows] = React.useState<TDSTxnRow[]>([]);
   const [loading, setLoading] = React.useState(true);
-  const [expandedLedger, setExpandedLedger] = React.useState<string | null>(null);
-  const [expandedVendor, setExpandedVendor] = React.useState<string | null>(null);
-  const [activeTab, setActiveTab] = React.useState<"tds" | "salary">("tds");
+  const [activeTab, setActiveTab] = React.useState<"bills" | "expenses">("bills");
   const [saved, setSaved] = React.useState(false);
 
   React.useEffect(() => {
-    const bankKw = ["current account","savings account","cash in hand","petty cash","hdfc","icici","sbi","axis","kotak","indusind","yes bank","federal bank","rbl","cash"];
-    const isBank = (s: string) => bankKw.some(b => s.toLowerCase().includes(b));
-
-    const map: Record<string, Record<string, { txns: { date: string; amount: number; ref: string; source: string }[]; source: string }>> = {};
-
-    const add = (account: string, vendor: string, amount: number, date: string, ref: string, source: string) => {
-      if (!account || isBank(account) || amount <= 0) return;
-      const acct = account.trim();
-      const vend = (vendor || "—").trim();
-      if (!map[acct]) map[acct] = {};
-      if (!map[acct][vend]) map[acct][vend] = { txns: [], source };
-      map[acct][vend].txns.push({ date, amount, ref, source });
-      if (source !== "Journal") map[acct][vend].source = source;
-    };
-
-    for (const e of expenses) add(e.account_name||"", e.vendor_name||"", e.total, e.date, e.expense_number||e.id.slice(-8), "Expense");
-    for (const b of bills) add(b.vendor_name||"", b.vendor_name||"", b.total, b.date, b.bill_number||b.id.slice(-8), "Bill");
-    for (const vp of vendorPayments) add(vp.vendor_name||"", vp.vendor_name||"", vp.amount, vp.date, vp.payment_number||vp.id.slice(-8), "VendorPmt");
-    for (const j of journals) {
-      try {
-        const lines = JSON.parse(j.line_items || "[]");
-        for (const l of lines) {
-          const amt = Number(l.amount || l.debit || 0);
-          const acct = l.account_name || "";
-          if ((l.debit_or_credit === "debit" || Number(l.debit||0) > 0) && amt > 0 && !isBank(acct))
-            add(acct, l.contact_name || l.customer_name || j.notes || "", amt, j.journal_date, j.entry_number||j.id.slice(-8), "Journal");
-        }
-      } catch {}
-    }
-
     supabase.from("pending_changes").select("*").eq("org_id", orgId).eq("module", "tds_ledger").then(({ data: sv }) => {
       const savedMap: Record<string, any> = {};
       for (const s of (sv || [])) savedMap[s.record_id || ""] = s.payload;
 
-      const result: TDSLedgerGroup[] = Object.entries(map)
-        .sort((a, b) => {
-          const tA = Object.values(a[1]).reduce((s, v) => s + v.txns.reduce((ss, t) => ss + t.amount, 0), 0);
-          const tB = Object.values(b[1]).reduce((s, v) => s + v.txns.reduce((ss, t) => ss + t.amount, 0), 0);
-          return tB - tA;
-        })
-        .map(([account, vendorMap]) => {
-          const isSalary = isSalaryAcct(account);
-          const vendors: TDSVendorRow[] = Object.entries(vendorMap)
-            .sort((a, b) => b[1].txns.reduce((s,t)=>s+t.amount,0) - a[1].txns.reduce((s,t)=>s+t.amount,0))
-            .map(([vendor, data]) => {
-              const key = `${account.toLowerCase().trim()}||${vendor.toLowerCase().trim()}`;
-              const sv2 = savedMap[key] || {};
-              const totalAmt = data.txns.reduce((s, t) => s + t.amount, 0);
-              const avgAmt = totalAmt / data.txns.length;
-              const inf = isSalary ? { sec: "192", rate: 10 } : inferTds(vendor, account, avgAmt);
-              return {
-                vendorKey: key, vendor, source: data.source, totalAmount: totalAmt, transactions: data.txns,
-                eligible: sv2.eligible !== undefined ? sv2.eligible : inf !== null,
-                sec: sv2.sec || inf?.sec || "194J",
-                rate: sv2.rate !== undefined ? sv2.rate : (inf?.rate || 10),
-                tdsAmount: sv2.tdsAmount !== undefined ? sv2.tdsAmount : (inf ? Math.round(totalAmt * inf.rate / 100) : 0),
-                pan: sv2.pan || "", note: sv2.note || "",
-              };
-            });
-          const totalAmount = vendors.reduce((s, v) => s + v.totalAmount, 0);
-          const totalTDS = vendors.filter(v => v.eligible).reduce((s, v) => s + v.tdsAmount, 0);
-          const dominantSrc = vendors.find(v => v.source !== "Journal")?.source || "Journal";
-          return { account, source: dominantSrc, totalAmount, totalTDS, vendors, isSalary };
-        });
+      const makeRow = (id: string, date: string, vendor: string, account: string, amount: number, ref: string, source: "Bill" | "Expense"): TDSTxnRow => {
+        const key = `txn||${source}||${id}`;
+        const sv2 = savedMap[key] || {};
+        const inf = inferTds(vendor, account, amount);
+        const defaultApplicable = inf !== null && !isSalaryAcct(account);
+        return {
+          id, date, vendor: vendor || "—", account: account || "—", amount, ref, source,
+          tdsApplicable: sv2.tdsApplicable !== undefined ? sv2.tdsApplicable : defaultApplicable,
+          sec: sv2.sec || inf?.sec || "194J",
+          rate: sv2.rate !== undefined ? sv2.rate : (inf?.rate || 10),
+          tdsAmount: sv2.tdsAmount !== undefined ? sv2.tdsAmount : (inf && defaultApplicable ? Math.round(amount * inf.rate / 100) : 0),
+          pan: sv2.pan || "",
+          manualTds: sv2.manualTds || false,
+        };
+      };
 
-      setGroups(result); setLoading(false);
+      const billRows = bills.map(b => makeRow(b.id, b.date, b.vendor_name||"", b.vendor_name||"", b.total, b.bill_number||b.id.slice(-8), "Bill"));
+      const expRows = expenses.map(e => makeRow(e.id, e.date, e.vendor_name||"", e.account_name||"", e.total, e.expense_number||e.id.slice(-8), "Expense"));
+
+      setRows([...billRows, ...expRows]);
+      setLoading(false);
     });
-  }, [orgId, expenses.length, bills.length, vendorPayments.length, journals.length]);
+  }, [orgId, bills.length, expenses.length]);
 
-  const saveVendor = async (vendorKey: string, updates: Partial<TDSVendorRow>) => {
-    setGroups(prev => prev.map(g => ({
-      ...g,
-      vendors: g.vendors.map(v => {
-        if (v.vendorKey !== vendorKey) return v;
-        const u = { ...v, ...updates };
-        if (updates.rate !== undefined) u.tdsAmount = Math.round(v.totalAmount * updates.rate / 100);
-        return u;
-      })
-    })));
-    const row = groups.flatMap(g => g.vendors).find(v => v.vendorKey === vendorKey);
+  const save = async (id: string, source: string, updates: Partial<TDSTxnRow>) => {
+    const key = `txn||${source}||${id}`;
+    const row = rows.find(r => r.id === id);
     if (!row) return;
-    await supabase.from("pending_changes").upsert({ org_id: orgId, module: "tds_ledger", action: "update", record_id: vendorKey, payload: { ...row, ...updates }, status: "saved" }, { onConflict: "org_id,module,record_id" });
+    const payload = { ...row, ...updates };
+    await supabase.from("pending_changes").upsert({ org_id: orgId, module: "tds_ledger", action: "update", record_id: key, payload, status: "saved" }, { onConflict: "org_id,module,record_id" });
     setSaved(true); setTimeout(() => setSaved(false), 1500);
   };
 
-  const nonSalaryGroups = groups.filter(g => !g.isSalary);
-  const salaryGroups = groups.filter(g => g.isSalary);
-  const activeGroups = activeTab === "tds" ? nonSalaryGroups : salaryGroups;
-  const nonSalaryTDS = nonSalaryGroups.flatMap(g => g.vendors).filter(v => v.eligible).reduce((s, v) => s + v.tdsAmount, 0);
-  const salaryTDS = salaryGroups.flatMap(g => g.vendors).filter(v => v.eligible).reduce((s, v) => s + v.tdsAmount, 0);
-  const allEligible = groups.flatMap(g => g.vendors).filter(v => v.eligible);
-  const missingPAN = allEligible.filter(v => !v.pan).length;
-  const TDS_SECTIONS = ["192","194A","194C","194D","194H","194I","194IB","194J","194K","194M","194N","194O","194Q","195","206AA"];
-
-  if (loading) return <div className="text-center py-16 text-zinc-400">Building TDS ledger from your data...</div>;
-
-  const SourceTag = ({ src }: { src: string }) => {
-    const map: Record<string,string> = { Expense:"bg-emerald-50 text-emerald-700 border-emerald-200", Bill:"bg-sky-50 text-sky-700 border-sky-200", Journal:"bg-violet-50 text-violet-700 border-violet-200", VendorPmt:"bg-orange-50 text-orange-700 border-orange-200" };
-    return <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold ${map[src]||"bg-zinc-50 text-zinc-500 border-zinc-200"}`}>{src.toUpperCase()}</span>;
+  const update = (id: string, field: string, value: any) => {
+    setRows(prev => prev.map(r => {
+      if (r.id !== id) return r;
+      const u: TDSTxnRow = { ...r, [field]: value };
+      if (field === "rate") { u.tdsAmount = Math.round(r.amount * value / 100); u.manualTds = false; }
+      if (field === "tdsAmount") u.manualTds = true;
+      if (field === "tdsApplicable") { u.tdsAmount = value ? Math.round(r.amount * r.rate / 100) : 0; u.manualTds = false; }
+      save(id, r.source, u);
+      return u;
+    }));
   };
+
+  const billRows = rows.filter(r => r.source === "Bill");
+  const expRows = rows.filter(r => r.source === "Expense");
+  const activeRows = activeTab === "bills" ? billRows : expRows;
+  const billTDS = billRows.filter(r => r.tdsApplicable).reduce((s, r) => s + r.tdsAmount, 0);
+  const expTDS = expRows.filter(r => r.tdsApplicable).reduce((s, r) => s + r.tdsAmount, 0);
+  const activeTDS = activeRows.filter(r => r.tdsApplicable).reduce((s, r) => s + r.tdsAmount, 0);
+  const missingPAN = rows.filter(r => r.tdsApplicable && !r.pan).length;
+
+  const TDS_SECTIONS = ["194A","194C","194D","194H","194I","194IB","194J","194K","194M","194Q","195","206AA"];
+
+  if (loading) return <div className="text-center py-16 text-zinc-400 text-sm">Loading TDS data...</div>;
+
+  const SourceTag = ({ src }: { src: string }) => (
+    <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold ${src === "Bill" ? "bg-sky-50 text-sky-700 border-sky-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`}>{src.toUpperCase()}</span>
+  );
 
   return (
     <div className="space-y-4">
-      {/* Summary */}
+      {/* Summary cards */}
       <div className="grid grid-cols-4 gap-3">
-        <Card label="Non-Salary TDS (26Q)" value={inr(nonSalaryTDS)} color="text-violet-700" />
-        <Card label="Salary TDS (24Q)" value={inr(salaryTDS)} color="text-blue-700" />
-        <Card label="Total TDS Liability" value={inr(nonSalaryTDS + salaryTDS)} />
+        <Card label="Bills TDS (26Q)" value={inr(billTDS)} color="text-sky-700" />
+        <Card label="Expenses TDS (26Q)" value={inr(expTDS)} color="text-emerald-700" />
+        <Card label="Total TDS Liability" value={inr(billTDS + expTDS)} />
         <Card label="PAN Missing" value={String(missingPAN)} color={missingPAN > 0 ? "text-red-600" : "text-emerald-600"} />
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-white border border-zinc-200 rounded-xl p-1 shadow-sm w-fit">
-        {([["tds", `Non-Salary TDS — Form 26Q (${nonSalaryGroups.length})`, "bg-violet-600"], ["salary", `Salary TDS — Form 24Q (${salaryGroups.length})`, "bg-blue-600"]] as [string,string,string][]).map(([id, label, color]) => (
-          <button key={id} onClick={() => setActiveTab(id as "tds"|"salary")}
-            className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === id ? `${color} text-white shadow-sm` : "text-zinc-500 hover:text-zinc-800"}`}>
-            {label}
-          </button>
-        ))}
+      <div className="flex items-center justify-between">
+        <div className="flex gap-1 bg-white border border-zinc-200 rounded-xl p-1 shadow-sm">
+          {([["bills", `Bills (${billRows.length})`, "bg-sky-600"], ["expenses", `Expenses (${expRows.length})`, "bg-emerald-600"]] as [string,string,string][]).map(([id, label, color]) => (
+            <button key={id} onClick={() => setActiveTab(id as "bills" | "expenses")}
+              className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === id ? `${color} text-white shadow-sm` : "text-zinc-500 hover:text-zinc-800"}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        {saved && <span className="text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1 rounded-full font-semibold">✓ Saved</span>}
       </div>
 
-      {activeTab === "salary" && (
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex gap-3">
-          <span className="text-blue-500 text-lg">ℹ</span>
-          <div>
-            <p className="text-sm font-bold text-blue-800">Salary TDS is managed in Zoho Payroll</p>
-            <p className="text-xs text-blue-600 mt-1">Per-employee TDS, Form 16 and Form 24Q filing must be done from <strong>Zoho Payroll → Tax → TDS</strong>. Data below is from payroll journals — for cross-reference only, do not use for filing.</p>
-          </div>
-        </div>
-      )}
-
-      {activeTab === "tds" && (
-        <div className="flex items-center justify-between bg-white border border-zinc-200 rounded-xl px-4 py-3">
-          <p className="text-xs text-zinc-500"><strong className="text-zinc-800">Click ledger</strong> → vendors · <strong className="text-zinc-800">Click vendor</strong> → transactions · Set TDS section, rate, PAN per vendor</p>
-          {saved && <span className="text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1 rounded-full font-semibold">✓ Saved</span>}
-        </div>
-      )}
-
-      {/* Ledger groups */}
-      <div className="space-y-2">
-        {activeGroups.map(group => {
-          const isOpen = expandedLedger === group.account;
-          const groupEligible = group.vendors.filter(v => v.eligible);
-          const groupTDS = groupEligible.reduce((s, v) => s + v.tdsAmount, 0);
-          return (
-            <div key={group.account} className="bg-white border border-zinc-200 rounded-xl overflow-hidden shadow-sm">
-              <div className={`flex items-center justify-between px-5 py-4 cursor-pointer select-none transition-colors ${isOpen ? "bg-zinc-50 border-b border-zinc-200" : "hover:bg-zinc-50"}`}
-                onClick={() => setExpandedLedger(isOpen ? null : group.account)}>
-                <div className="flex items-center gap-3">
-                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm font-bold ${isOpen ? "bg-zinc-900 text-white" : "bg-zinc-100 text-zinc-500"}`}>{isOpen ? "−" : "+"}</div>
-                  <div>
-                    <p className="font-bold text-zinc-900">{group.account}</p>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <SourceTag src={group.source} />
-                      <span className="text-xs text-zinc-400">{group.vendors.length} vendor{group.vendors.length !== 1 ? "s" : ""}</span>
-                      {groupEligible.length > 0 && <span className="text-xs font-semibold text-violet-600">{groupEligible.length} liable</span>}
-                    </div>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="font-bold text-zinc-900">{inr(group.totalAmount)}</p>
-                  {groupTDS > 0 ? <p className="text-xs font-semibold text-violet-600">TDS {inr(groupTDS)}</p> : <p className="text-xs text-zinc-400">No TDS marked</p>}
-                </div>
-              </div>
-
-              {isOpen && (
-                <div className="divide-y divide-zinc-100">
-                  {group.vendors.map(vendor => {
-                    const vKey = vendor.vendorKey;
-                    const isVOpen = expandedVendor === vKey;
-                    return (
-                      <div key={vKey} className={!vendor.eligible ? "bg-zinc-50/60 opacity-60" : ""}>
-                        <div className="px-5 py-4">
-                          <div className="flex items-start gap-3 flex-wrap">
-                            <button onClick={() => setExpandedVendor(isVOpen ? null : vKey)}
-                              className={`mt-1 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${isVOpen ? "bg-zinc-900 text-white" : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200"}`}>
-                              {isVOpen ? "−" : "+"}
-                            </button>
-                            <div className="flex-1 min-w-[120px]">
-                              <p className="font-semibold text-zinc-900 text-sm">{vendor.vendor}</p>
-                              <div className="flex items-center gap-2 mt-0.5">
-                                <SourceTag src={vendor.source} />
-                                <span className="text-xs text-zinc-400">{vendor.transactions.length} txns · {inr(vendor.totalAmount)}</span>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2 flex-wrap mt-0.5">
-                              <button onClick={() => saveVendor(vKey, { eligible: !vendor.eligible })}
-                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${vendor.eligible ? "bg-violet-600 text-white border-violet-600" : "bg-white text-zinc-400 border-zinc-200 hover:border-zinc-400"}`}>
-                                <span className={`w-1.5 h-1.5 rounded-full ${vendor.eligible ? "bg-white" : "bg-zinc-300"}`} />
-                                {vendor.eligible ? "TDS Applicable" : "No TDS"}
-                              </button>
-                              {vendor.eligible && <>
-                                <select value={vendor.sec} onChange={e => saveVendor(vKey, { sec: e.target.value })}
-                                  className="text-xs border border-zinc-200 rounded-lg px-2 py-1.5 font-mono font-bold text-violet-700 bg-white focus:outline-none">
-                                  {TDS_SECTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                                </select>
-                                <div className="flex items-center gap-1 bg-zinc-50 border border-zinc-200 rounded-lg px-2 py-1.5">
-                                  <input type="number" value={vendor.rate} onChange={e => saveVendor(vKey, { rate: Number(e.target.value) })}
-                                    className="w-10 text-xs text-right font-bold bg-transparent focus:outline-none" />
-                                  <span className="text-xs text-zinc-400">%</span>
-                                </div>
-                                <div className="flex items-center gap-1 bg-violet-50 border border-violet-200 rounded-lg px-2 py-1.5">
-                                  <span className="text-xs text-violet-400">₹</span>
-                                  <input type="number" value={vendor.tdsAmount} onChange={e => saveVendor(vKey, { tdsAmount: Number(e.target.value) })}
-                                    className="w-20 text-xs text-right font-bold text-violet-700 bg-transparent focus:outline-none" />
-                                </div>
-                              </>}
-                              <div>
-                                <input value={vendor.pan} onChange={e => saveVendor(vKey, { pan: e.target.value.toUpperCase() })}
-                                  placeholder="Enter PAN" maxLength={10}
-                                  className={`w-32 text-xs border rounded-lg px-2.5 py-1.5 font-mono uppercase tracking-wider focus:outline-none ${vendor.eligible && !vendor.pan ? "border-red-300 bg-red-50 text-red-800 placeholder-red-300" : "border-zinc-200 bg-white"}`} />
-                                {vendor.eligible && !vendor.pan && <p className="text-[10px] text-red-500 mt-0.5 text-center">⚠ Required</p>}
-                              </div>
-                              <input value={vendor.note} onChange={e => saveVendor(vKey, { note: e.target.value })}
-                                placeholder="Remarks" className="w-28 text-xs border border-zinc-200 rounded-lg px-2.5 py-1.5 focus:outline-none text-zinc-600 bg-white" />
-                            </div>
-                          </div>
-                        </div>
-                        {isVOpen && (
-                          <div className="mx-5 mb-4 border border-zinc-200 rounded-xl overflow-hidden">
-                            <div className="bg-zinc-900 px-4 py-3 flex items-center justify-between">
-                              <p className="text-xs font-semibold text-white">{vendor.vendor}</p>
-                              {vendor.eligible && <p className="text-xs text-zinc-300">Sec {vendor.sec} @{vendor.rate}% = <span className="text-white font-bold">{inr(vendor.tdsAmount)}</span></p>}
-                            </div>
-                            <table className="w-full text-xs bg-white">
-                              <thead><tr className="border-b border-zinc-100 text-zinc-400 uppercase text-[10px]">
-                                <th className="text-left px-4 py-2.5">Date</th>
-                                <th className="text-left px-4 py-2.5">Reference</th>
-                                <th className="text-center px-4 py-2.5">Source</th>
-                                <th className="text-right px-4 py-2.5">Amount</th>
-                                <th className="text-right px-4 py-2.5">TDS Due</th>
-                              </tr></thead>
-                              <tbody>
-                                {vendor.transactions.sort((a,b)=>(b.date||"").localeCompare(a.date||"")).map((t,i) => (
-                                  <tr key={i} className="border-b border-zinc-50 last:border-0 hover:bg-zinc-50">
-                                    <td className="px-4 py-2.5 text-zinc-600">{fdate(t.date)}</td>
-                                    <td className="px-4 py-2.5 font-mono text-zinc-500">{t.ref}</td>
-                                    <td className="px-4 py-2.5 text-center"><SourceTag src={t.source} /></td>
-                                    <td className="px-4 py-2.5 text-right font-semibold text-zinc-900">{inr(t.amount)}</td>
-                                    <td className="px-4 py-2.5 text-right font-bold text-violet-600">{vendor.eligible ? inr(Math.round(t.amount * vendor.rate / 100)) : <span className="text-zinc-300">—</span>}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                              <tfoot><tr className="bg-zinc-50 border-t-2 border-zinc-200">
-                                <td colSpan={3} className="px-4 py-2.5 font-bold text-zinc-700">Total</td>
-                                <td className="px-4 py-2.5 text-right font-bold text-zinc-900">{inr(vendor.totalAmount)}</td>
-                                <td className="px-4 py-2.5 text-right font-bold text-violet-700">{vendor.eligible ? inr(vendor.tdsAmount) : <span className="text-zinc-300">—</span>}</td>
-                              </tr></tfoot>
-                            </table>
-                          </div>
-                        )}
+      {/* Table */}
+      <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-zinc-200 bg-zinc-50 text-[11px] font-semibold text-zinc-500 uppercase tracking-wide">
+                <th className="text-left px-4 py-3 whitespace-nowrap">Date</th>
+                <th className="text-left px-4 py-3">Vendor</th>
+                <th className="text-left px-4 py-3">Account / Ledger</th>
+                <th className="text-right px-4 py-3 whitespace-nowrap">Amount</th>
+                <th className="text-center px-4 py-3 whitespace-nowrap">TDS?</th>
+                <th className="text-center px-4 py-3">Section</th>
+                <th className="text-right px-4 py-3">Rate</th>
+                <th className="text-right px-4 py-3 whitespace-nowrap">TDS ₹</th>
+                <th className="text-left px-4 py-3">PAN</th>
+                <th className="text-left px-4 py-3">Ref</th>
+              </tr>
+            </thead>
+            <tbody>
+              {activeRows.sort((a,b) => (b.date||"").localeCompare(a.date||"")).map(row => (
+                <tr key={row.id} className={`border-b border-zinc-100 last:border-0 transition-colors ${row.tdsApplicable ? "hover:bg-violet-50/20" : "opacity-50 hover:bg-zinc-50"}`}>
+                  <td className="px-4 py-3 text-zinc-600 whitespace-nowrap text-xs">{fdate(row.date)}</td>
+                  <td className="px-4 py-3 font-semibold text-zinc-900">{row.vendor}</td>
+                  <td className="px-4 py-3 text-zinc-500 text-xs">{row.account}</td>
+                  <td className="px-4 py-3 text-right font-bold text-zinc-900">{inr(row.amount)}</td>
+                  <td className="px-4 py-3 text-center">
+                    <button onClick={() => update(row.id, "tdsApplicable", !row.tdsApplicable)}
+                      className={`w-10 h-5 rounded-full relative transition-all ${row.tdsApplicable ? "bg-violet-600" : "bg-zinc-200"}`}>
+                      <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${row.tdsApplicable ? "left-5" : "left-0.5"}`} />
+                    </button>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    {row.tdsApplicable ? (
+                      <select value={row.sec} onChange={e => update(row.id, "sec", e.target.value)}
+                        className="text-xs border border-zinc-200 rounded-lg px-2 py-1 font-mono font-bold text-violet-700 bg-white focus:outline-none focus:border-violet-400">
+                        {TDS_SECTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    ) : <span className="text-zinc-300">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {row.tdsApplicable ? (
+                      <div className="flex items-center justify-end gap-0.5">
+                        <input type="number" value={row.rate} onChange={e => update(row.id, "rate", Number(e.target.value))}
+                          className="w-12 text-xs text-right font-bold border border-zinc-200 rounded-lg px-2 py-1 focus:outline-none focus:border-violet-400" />
+                        <span className="text-xs text-zinc-400">%</span>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })}
+                    ) : <span className="text-zinc-300">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {row.tdsApplicable ? (
+                      <div className="relative">
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-violet-400">₹</span>
+                        <input type="number" value={row.tdsAmount} onChange={e => update(row.id, "tdsAmount", Number(e.target.value))}
+                          className={`w-24 text-xs text-right font-bold text-violet-700 border rounded-lg pl-5 pr-2 py-1 focus:outline-none focus:border-violet-400 ${row.manualTds ? "border-amber-300 bg-amber-50" : "border-zinc-200"}`} />
+                        {row.manualTds && <span className="absolute -top-2 right-0 text-[9px] text-amber-600 font-bold bg-amber-50 px-1 rounded">edited</span>}
+                      </div>
+                    ) : <span className="text-zinc-300">—</span>}
+                  </td>
+                  <td className="px-4 py-3">
+                    {row.tdsApplicable ? (
+                      <input value={row.pan} onChange={e => update(row.id, "pan", e.target.value.toUpperCase())}
+                        placeholder="AAAAA0000A" maxLength={10}
+                        className={`w-28 text-xs border rounded-lg px-2 py-1 font-mono uppercase tracking-wider focus:outline-none ${!row.pan ? "border-red-300 bg-red-50 placeholder-red-300" : "border-zinc-200 focus:border-black"}`} />
+                    ) : <span className="text-zinc-300 text-xs">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-xs font-mono text-zinc-400">{row.ref}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-zinc-200 bg-zinc-50 font-bold">
+                <td colSpan={3} className="px-4 py-3 text-sm text-zinc-700">
+                  Total · {activeRows.filter(r => r.tdsApplicable).length} of {activeRows.length} transactions liable
+                </td>
+                <td className="px-4 py-3 text-right text-zinc-900">{inr(activeRows.reduce((s,r)=>s+r.amount,0))}</td>
+                <td colSpan={3}></td>
+                <td className="px-4 py-3 text-right text-violet-700">{inr(activeTDS)}</td>
+                <td className="px-4 py-3 text-xs">
+                  {activeRows.filter(r=>r.tdsApplicable&&!r.pan).length > 0
+                    ? <span className="text-red-500">⚠ {activeRows.filter(r=>r.tdsApplicable&&!r.pan).length} PAN missing</span>
+                    : <span className="text-emerald-600">✓ All PAN</span>}
+                </td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
       </div>
 
-      {/* Footer */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className="bg-zinc-900 rounded-xl px-6 py-5 flex items-center justify-between">
-          <div>
-            <p className="text-xs text-zinc-400 uppercase tracking-wider font-semibold">Form 26Q — Non-Salary TDS</p>
-            <p className="font-black text-2xl mt-1 text-white">{inr(nonSalaryTDS)}</p>
-            <p className="text-xs mt-1">{nonSalaryGroups.flatMap(g=>g.vendors).filter(v=>v.eligible&&!v.pan).length > 0 ? <span className="text-yellow-400">⚠ PAN missing</span> : <span className="text-emerald-400">✓ All PAN captured</span>}</p>
-          </div>
-          <span className="text-3xl opacity-20">📋</span>
-        </div>
-        <div className="bg-blue-600 rounded-xl px-6 py-5 flex items-center justify-between">
-          <div>
-            <p className="text-xs text-blue-200 uppercase tracking-wider font-semibold">Form 24Q — Salary TDS</p>
-            <p className="font-black text-2xl mt-1 text-white">{inr(salaryTDS)}</p>
-            <p className="text-xs text-blue-200 mt-1">Manage per-employee in Zoho Payroll</p>
-          </div>
-          <span className="text-3xl opacity-20">💰</span>
-        </div>
+      <div className="flex items-center gap-2 text-xs text-zinc-500 bg-white border border-zinc-200 rounded-xl px-4 py-3">
+        <span>💡</span>
+        <span>TDS amount <strong className="text-zinc-700">auto-calculates</strong> from rate. Manually edit ₹ field to override — shows <span className="text-amber-600 font-semibold">edited</span>. Changing rate % resets to auto.</span>
       </div>
     </div>
   );

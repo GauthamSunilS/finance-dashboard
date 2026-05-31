@@ -86,7 +86,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 function Badge({ status }: { status: string }) {
   return (
-    <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${STATUS_COLORS[status] || "bg-zinc-800 text-zinc-400"}`}>
+    <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${STATUS_COLORS[status] || "bg-zinc-100 text-zinc-500"}`}>
       {status}
     </span>
   );
@@ -94,7 +94,7 @@ function Badge({ status }: { status: string }) {
 
 function SummaryCard({ label, value, color }: { label: string; value: string; color: string }) {
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+    <div className="bg-white border border-zinc-200 rounded-xl p-4">
       <p className="text-xs text-zinc-500 mb-1">{label}</p>
       <p className={`text-xl font-semibold ${color}`}>{value}</p>
     </div>
@@ -120,28 +120,28 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
-      <div className="w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-2xl p-8 space-y-6">
+    <div className="min-h-screen bg-white flex items-center justify-center p-4">
+      <div className="w-full max-w-sm bg-white border border-zinc-200 rounded-2xl p-8 space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">Finance Dashboard</h1>
+          <h1 className="text-2xl font-bold text-black tracking-tight">Finance Dashboard</h1>
           <p className="text-zinc-500 text-sm mt-1">Sign in to continue</p>
         </div>
         <div className="space-y-3">
           <div>
-            <label className="text-xs text-zinc-400 mb-1 block">Email</label>
+            <label className="text-xs text-zinc-500 mb-1 block">Email</label>
             <input type="email" value={email} onChange={e => setEmail(e.target.value)}
               placeholder="you@example.com"
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-zinc-500" />
+              className="w-full bg-zinc-100 border border-zinc-300 rounded-lg px-4 py-2.5 text-sm text-zinc-900 placeholder-zinc-600 focus:outline-none focus:border-zinc-500" />
           </div>
           <div>
-            <label className="text-xs text-zinc-400 mb-1 block">Password</label>
+            <label className="text-xs text-zinc-500 mb-1 block">Password</label>
             <input type="password" value={password} onChange={e => setPassword(e.target.value)}
               onKeyDown={e => e.key === "Enter" && handleLogin()}
               placeholder="••••••••"
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-zinc-500" />
+              className="w-full bg-zinc-100 border border-zinc-300 rounded-lg px-4 py-2.5 text-sm text-zinc-900 placeholder-zinc-600 focus:outline-none focus:border-zinc-500" />
           </div>
         </div>
-        {error && <p className="text-red-400 text-xs">{error}</p>}
+        {error && <p className="text-red-600 text-xs">{error}</p>}
         <button onClick={handleLogin} disabled={loading}
           className="w-full bg-white text-zinc-900 font-semibold text-sm py-2.5 rounded-lg hover:bg-zinc-200 transition disabled:opacity-50">
           {loading ? "Signing in..." : "Sign In"}
@@ -182,25 +182,25 @@ function InvoicesTab({ clientId }: { clientId: string }) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <SummaryCard label="Total Invoiced" value={fmt(total)} color="text-white" />
-        <SummaryCard label="Outstanding" value={fmt(balance)} color="text-amber-400" />
-        <SummaryCard label="GST Collected" value={fmt(tax)} color="text-blue-400" />
-        <SummaryCard label="Paid" value={`${paid} / ${filtered.length}`} color="text-emerald-400" />
+        <SummaryCard label="Total Invoiced" value={fmt(total)} color="text-black" />
+        <SummaryCard label="Outstanding" value={fmt(balance)} color="text-amber-600" />
+        <SummaryCard label="GST Collected" value={fmt(tax)} color="text-blue-600" />
+        <SummaryCard label="Paid" value={`${paid} / ${filtered.length}`} color="text-emerald-600" />
       </div>
       <div className="flex gap-3">
         <input value={search} onChange={e => setSearch(e.target.value)}
           placeholder="Search customer or invoice..."
-          className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none" />
+          className="flex-1 bg-white border border-zinc-200 rounded-lg px-4 py-2 text-sm text-zinc-800 placeholder-zinc-600 focus:outline-none" />
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-          className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-300 focus:outline-none">
+          className="bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-700 focus:outline-none">
           {statuses.map(s => <option key={s} value={s}>{s === "all" ? "All Statuses" : s}</option>)}
         </select>
       </div>
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+      <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-zinc-800 text-zinc-500 text-xs uppercase">
+              <tr className="border-b border-zinc-200 text-zinc-500 text-xs uppercase">
                 <th className="text-left px-4 py-3">Invoice</th>
                 <th className="text-left px-4 py-3">Customer</th>
                 <th className="text-left px-4 py-3">Date</th>
@@ -216,25 +216,25 @@ function InvoicesTab({ clientId }: { clientId: string }) {
               {filtered.length === 0 ? (
                 <tr><td colSpan={9} className="text-center py-10 text-zinc-500">No invoices found</td></tr>
               ) : filtered.map((inv, i) => (
-                <tr key={inv.id} className={`border-b border-zinc-800/60 hover:bg-zinc-800/40 ${i % 2 === 0 ? "" : "bg-zinc-900/50"}`}>
-                  <td className="px-4 py-3 font-mono text-zinc-400 text-xs">{inv.invoice_number}</td>
-                  <td className="px-4 py-3 font-medium text-zinc-100 max-w-[160px] truncate">
+                <tr key={inv.id} className={`border-b border-zinc-100 hover:bg-zinc-50 ${i % 2 === 0 ? "" : "bg-white/50"}`}>
+                  <td className="px-4 py-3 font-mono text-zinc-500 text-xs">{inv.invoice_number}</td>
+                  <td className="px-4 py-3 font-medium text-zinc-900 max-w-[160px] truncate">
                     {inv.customer_name}
                     {inv.gst_number && <div className="text-xs text-zinc-500">{inv.gst_number}</div>}
                   </td>
-                  <td className="px-4 py-3 text-zinc-400">{fmtDate(inv.date)}</td>
-                  <td className="px-4 py-3 text-zinc-400">{fmtDate(inv.due_date)}</td>
+                  <td className="px-4 py-3 text-zinc-500">{fmtDate(inv.date)}</td>
+                  <td className="px-4 py-3 text-zinc-500">{fmtDate(inv.due_date)}</td>
                   <td className="px-4 py-3"><Badge status={inv.status} /></td>
-                  <td className="px-4 py-3 text-right text-zinc-300">{inv.sub_total > 0 ? fmt(inv.sub_total, inv.currency_code) : "—"}</td>
-                  <td className="px-4 py-3 text-right text-blue-400">{inv.tax_total > 0 ? fmt(inv.tax_total, inv.currency_code) : "—"}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-white">{fmt(inv.total, inv.currency_code)}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-amber-400">{inv.balance > 0 ? fmt(inv.balance, inv.currency_code) : "—"}</td>
+                  <td className="px-4 py-3 text-right text-zinc-700">{inv.sub_total > 0 ? fmt(inv.sub_total, inv.currency_code) : "—"}</td>
+                  <td className="px-4 py-3 text-right text-blue-600">{inv.tax_total > 0 ? fmt(inv.tax_total, inv.currency_code) : "—"}</td>
+                  <td className="px-4 py-3 text-right font-semibold text-black">{fmt(inv.total, inv.currency_code)}</td>
+                  <td className="px-4 py-3 text-right font-semibold text-amber-600">{inv.balance > 0 ? fmt(inv.balance, inv.currency_code) : "—"}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <div className="px-4 py-2 text-xs text-zinc-600 border-t border-zinc-800">
+        <div className="px-4 py-2 text-xs text-zinc-400 border-t border-zinc-200">
           Showing {filtered.length} of {data.length} invoices
         </div>
       </div>
@@ -267,18 +267,18 @@ function SalesOrdersTab({ clientId }: { clientId: string }) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-        <SummaryCard label="Total Orders" value={`${filtered.length}`} color="text-white" />
-        <SummaryCard label="Total Value" value={fmt(total)} color="text-blue-400" />
-        <SummaryCard label="Confirmed" value={`${filtered.filter(s => s.status === "confirmed").length}`} color="text-emerald-400" />
+        <SummaryCard label="Total Orders" value={`${filtered.length}`} color="text-black" />
+        <SummaryCard label="Total Value" value={fmt(total)} color="text-blue-600" />
+        <SummaryCard label="Confirmed" value={`${filtered.filter(s => s.status === "confirmed").length}`} color="text-emerald-600" />
       </div>
       <input value={search} onChange={e => setSearch(e.target.value)}
         placeholder="Search customer or order number..."
-        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none" />
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+        className="w-full bg-white border border-zinc-200 rounded-lg px-4 py-2 text-sm text-zinc-800 placeholder-zinc-600 focus:outline-none" />
+      <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-zinc-800 text-zinc-500 text-xs uppercase">
+              <tr className="border-b border-zinc-200 text-zinc-500 text-xs uppercase">
                 <th className="text-left px-4 py-3">Order #</th>
                 <th className="text-left px-4 py-3">Customer</th>
                 <th className="text-left px-4 py-3">Date</th>
@@ -291,13 +291,13 @@ function SalesOrdersTab({ clientId }: { clientId: string }) {
               {filtered.length === 0 ? (
                 <tr><td colSpan={8} className="text-center py-10 text-zinc-500">No data yet — sync from Zoho to populate</td></tr>
               ) : filtered.map((s, i) => (
-                <tr key={s.id} className={`border-b border-zinc-800/60 hover:bg-zinc-800/40 ${i % 2 === 0 ? "" : "bg-zinc-900/50"}`}>
-                  <td className="px-4 py-3 font-mono text-zinc-400 text-xs">{s.salesorder_number}</td>
-                  <td className="px-4 py-3 font-medium text-zinc-100">{s.customer_name}</td>
-                  <td className="px-4 py-3 text-zinc-400">{fmtDate(s.date)}</td>
-                  <td className="px-4 py-3 text-zinc-400">{fmtDate(s.shipment_date)}</td>
+                <tr key={s.id} className={`border-b border-zinc-100 hover:bg-zinc-50 ${i % 2 === 0 ? "" : "bg-white/50"}`}>
+                  <td className="px-4 py-3 font-mono text-zinc-500 text-xs">{s.salesorder_number}</td>
+                  <td className="px-4 py-3 font-medium text-zinc-900">{s.customer_name}</td>
+                  <td className="px-4 py-3 text-zinc-500">{fmtDate(s.date)}</td>
+                  <td className="px-4 py-3 text-zinc-500">{fmtDate(s.shipment_date)}</td>
                   <td className="px-4 py-3"><Badge status={s.status} /></td>
-                  <td className="px-4 py-3 text-right font-semibold text-white">{fmt(s.total, s.currency_code ?? "INR")}</td>
+                  <td className="px-4 py-3 text-right font-semibold text-black">{fmt(s.total, s.currency_code ?? "INR")}</td>
                 </tr>
               ))}
             </tbody>
@@ -334,18 +334,18 @@ function EstimatesTab({ clientId }: { clientId: string }) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-        <SummaryCard label="Total Estimates" value={`${filtered.length}`} color="text-white" />
-        <SummaryCard label="Total Value" value={fmt(total)} color="text-blue-400" />
-        <SummaryCard label="Accepted" value={`${accepted}`} color="text-emerald-400" />
+        <SummaryCard label="Total Estimates" value={`${filtered.length}`} color="text-black" />
+        <SummaryCard label="Total Value" value={fmt(total)} color="text-blue-600" />
+        <SummaryCard label="Accepted" value={`${accepted}`} color="text-emerald-600" />
       </div>
       <input value={search} onChange={e => setSearch(e.target.value)}
         placeholder="Search customer or estimate number..."
-        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none" />
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+        className="w-full bg-white border border-zinc-200 rounded-lg px-4 py-2 text-sm text-zinc-800 placeholder-zinc-600 focus:outline-none" />
+      <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-zinc-800 text-zinc-500 text-xs uppercase">
+              <tr className="border-b border-zinc-200 text-zinc-500 text-xs uppercase">
                 <th className="text-left px-4 py-3">Estimate #</th>
                 <th className="text-left px-4 py-3">Customer</th>
                 <th className="text-left px-4 py-3">Date</th>
@@ -358,13 +358,13 @@ function EstimatesTab({ clientId }: { clientId: string }) {
               {filtered.length === 0 ? (
                 <tr><td colSpan={8} className="text-center py-10 text-zinc-500">No data yet — sync from Zoho to populate</td></tr>
               ) : filtered.map((e, i) => (
-                <tr key={e.id} className={`border-b border-zinc-800/60 hover:bg-zinc-800/40 ${i % 2 === 0 ? "" : "bg-zinc-900/50"}`}>
-                  <td className="px-4 py-3 font-mono text-zinc-400 text-xs">{e.estimate_number}</td>
-                  <td className="px-4 py-3 font-medium text-zinc-100">{e.customer_name}</td>
-                  <td className="px-4 py-3 text-zinc-400">{fmtDate(e.date)}</td>
-                  <td className="px-4 py-3 text-zinc-400">{fmtDate(e.expiry_date)}</td>
+                <tr key={e.id} className={`border-b border-zinc-100 hover:bg-zinc-50 ${i % 2 === 0 ? "" : "bg-white/50"}`}>
+                  <td className="px-4 py-3 font-mono text-zinc-500 text-xs">{e.estimate_number}</td>
+                  <td className="px-4 py-3 font-medium text-zinc-900">{e.customer_name}</td>
+                  <td className="px-4 py-3 text-zinc-500">{fmtDate(e.date)}</td>
+                  <td className="px-4 py-3 text-zinc-500">{fmtDate(e.expiry_date)}</td>
                   <td className="px-4 py-3"><Badge status={e.status} /></td>
-                  <td className="px-4 py-3 text-right font-semibold text-white">{fmt(e.total, e.currency_code ?? "INR")}</td>
+                  <td className="px-4 py-3 text-right font-semibold text-black">{fmt(e.total, e.currency_code ?? "INR")}</td>
                 </tr>
               ))}
             </tbody>
@@ -400,17 +400,17 @@ function PaymentsTab({ clientId }: { clientId: string }) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3">
-        <SummaryCard label="Total Payments" value={`${filtered.length}`} color="text-white" />
-        <SummaryCard label="Total Received" value={fmt(total)} color="text-emerald-400" />
+        <SummaryCard label="Total Payments" value={`${filtered.length}`} color="text-black" />
+        <SummaryCard label="Total Received" value={fmt(total)} color="text-emerald-600" />
       </div>
       <input value={search} onChange={e => setSearch(e.target.value)}
         placeholder="Search customer or payment number..."
-        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none" />
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+        className="w-full bg-white border border-zinc-200 rounded-lg px-4 py-2 text-sm text-zinc-800 placeholder-zinc-600 focus:outline-none" />
+      <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-zinc-800 text-zinc-500 text-xs uppercase">
+              <tr className="border-b border-zinc-200 text-zinc-500 text-xs uppercase">
                 <th className="text-left px-4 py-3">Payment #</th>
                 <th className="text-left px-4 py-3">Customer</th>
                 <th className="text-left px-4 py-3">Date</th>
@@ -422,12 +422,12 @@ function PaymentsTab({ clientId }: { clientId: string }) {
               {filtered.length === 0 ? (
                 <tr><td colSpan={5} className="text-center py-10 text-zinc-500">No data yet — sync from Zoho to populate</td></tr>
               ) : filtered.map((p, i) => (
-                <tr key={p.id} className={`border-b border-zinc-800/60 hover:bg-zinc-800/40 ${i % 2 === 0 ? "" : "bg-zinc-900/50"}`}>
-                  <td className="px-4 py-3 font-mono text-zinc-400 text-xs">{p.payment_number}</td>
-                  <td className="px-4 py-3 font-medium text-zinc-100">{p.customer_name}</td>
-                  <td className="px-4 py-3 text-zinc-400">{fmtDate(p.date)}</td>
-                  <td className="px-4 py-3 text-zinc-400 capitalize">{p.payment_mode}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-emerald-400">{fmt(p.amount, p.currency_code ?? "INR")}</td>
+                <tr key={p.id} className={`border-b border-zinc-100 hover:bg-zinc-50 ${i % 2 === 0 ? "" : "bg-white/50"}`}>
+                  <td className="px-4 py-3 font-mono text-zinc-500 text-xs">{p.payment_number}</td>
+                  <td className="px-4 py-3 font-medium text-zinc-900">{p.customer_name}</td>
+                  <td className="px-4 py-3 text-zinc-500">{fmtDate(p.date)}</td>
+                  <td className="px-4 py-3 text-zinc-500 capitalize">{p.payment_mode}</td>
+                  <td className="px-4 py-3 text-right font-semibold text-emerald-600">{fmt(p.amount, p.currency_code ?? "INR")}</td>
                 </tr>
               ))}
             </tbody>
@@ -463,18 +463,18 @@ function ExpensesTab({ clientId }: { clientId: string }) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-3 gap-3">
-        <SummaryCard label="Total Expenses" value={`${filtered.length}`} color="text-white" />
-        <SummaryCard label="Total GST Paid" value={fmt(filtered.reduce((s,e) => s + (e.tax_total || 0), 0), data[0]?.currency_code || "INR")} color="text-blue-400" />
-        <SummaryCard label="Total Amount" value={fmt(total, data[0]?.currency_code || "INR")} color="text-red-400" />
+        <SummaryCard label="Total Expenses" value={`${filtered.length}`} color="text-black" />
+        <SummaryCard label="Total GST Paid" value={fmt(filtered.reduce((s,e) => s + (e.tax_total || 0), 0), data[0]?.currency_code || "INR")} color="text-blue-600" />
+        <SummaryCard label="Total Amount" value={fmt(total, data[0]?.currency_code || "INR")} color="text-red-600" />
       </div>
       <input value={search} onChange={e => setSearch(e.target.value)}
         placeholder="Search vendor or account..."
-        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none" />
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+        className="w-full bg-white border border-zinc-200 rounded-lg px-4 py-2 text-sm text-zinc-800 placeholder-zinc-600 focus:outline-none" />
+      <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-zinc-800 text-zinc-500 text-xs uppercase">
+              <tr className="border-b border-zinc-200 text-zinc-500 text-xs uppercase">
                 <th className="text-left px-4 py-3">Expense #</th>
                 <th className="text-left px-4 py-3">Account</th>
                 <th className="text-left px-4 py-3">Vendor</th>
@@ -489,15 +489,15 @@ function ExpensesTab({ clientId }: { clientId: string }) {
               {filtered.length === 0 ? (
                 <tr><td colSpan={8} className="text-center py-10 text-zinc-500">No data yet — sync from Zoho to populate</td></tr>
               ) : filtered.map((e, i) => (
-                <tr key={e.id} className={`border-b border-zinc-800/60 hover:bg-zinc-800/40 ${i % 2 === 0 ? "" : "bg-zinc-900/50"}`}>
-                  <td className="px-4 py-3 font-mono text-zinc-400 text-xs">{e.expense_number?.slice(-10) || "—"}</td>
-                  <td className="px-4 py-3 text-zinc-300">{e.account_name}</td>
-                  <td className="px-4 py-3 text-zinc-300">{e.vendor_name}</td>
-                  <td className="px-4 py-3 text-zinc-400">{fmtDate(e.date)}</td>
+                <tr key={e.id} className={`border-b border-zinc-100 hover:bg-zinc-50 ${i % 2 === 0 ? "" : "bg-white/50"}`}>
+                  <td className="px-4 py-3 font-mono text-zinc-500 text-xs">{e.expense_number?.slice(-10) || "—"}</td>
+                  <td className="px-4 py-3 text-zinc-700">{e.account_name}</td>
+                  <td className="px-4 py-3 text-zinc-700">{e.vendor_name}</td>
+                  <td className="px-4 py-3 text-zinc-500">{fmtDate(e.date)}</td>
                   <td className="px-4 py-3"><Badge status={e.status} /></td>
-                  <td className="px-4 py-3 text-right text-zinc-300">{e.sub_total > 0 ? fmt(e.sub_total, e.currency_code || "INR") : fmt(e.total - (e.tax_total || 0), e.currency_code || "INR")}</td>
-                  <td className="px-4 py-3 text-right text-blue-400">{e.tax_total > 0 ? fmt(e.tax_total, e.currency_code || "INR") : "—"}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-red-400">{fmt(e.total, e.currency_code || "INR")}</td>
+                  <td className="px-4 py-3 text-right text-zinc-700">{e.sub_total > 0 ? fmt(e.sub_total, e.currency_code || "INR") : fmt(e.total - (e.tax_total || 0), e.currency_code || "INR")}</td>
+                  <td className="px-4 py-3 text-right text-blue-600">{e.tax_total > 0 ? fmt(e.tax_total, e.currency_code || "INR") : "—"}</td>
+                  <td className="px-4 py-3 text-right font-semibold text-red-600">{fmt(e.total, e.currency_code || "INR")}</td>
                 </tr>
               ))}
             </tbody>
@@ -939,9 +939,9 @@ function buildCustomer360(invoices: Invoice[], payments: Payment[], salesOrders:
 }
 
 const SEVSTYLE: Record<string, { border: string; badge: string; bg: string; text: string }> = {
-  Critical: { border: "border-red-500/40",   badge: "bg-red-500 text-white",    bg: "bg-red-950/25",   text: "text-red-300" },
-  Warning:  { border: "border-amber-500/35",  badge: "bg-amber-400 text-black",  bg: "bg-amber-950/20", text: "text-amber-300" },
-  Info:     { border: "border-sky-500/30",    badge: "bg-sky-600 text-white",    bg: "bg-sky-950/20",   text: "text-sky-300" },
+  Critical: { border: "border-red-500/40",   badge: "bg-red-500 text-black",    bg: "bg-red-950/25",   text: "text-red-600" },
+  Warning:  { border: "border-amber-500/35",  badge: "bg-amber-400 text-black",  bg: "bg-amber-50", text: "text-amber-600" },
+  Info:     { border: "border-sky-500/30",    badge: "bg-sky-600 text-black",    bg: "bg-sky-50",   text: "text-sky-600" },
 };
 
 function inrFmt(n: number) { return "₹" + Math.abs(n).toLocaleString("en-IN"); }
@@ -1027,7 +1027,7 @@ function AuditTab({ clientId }: { clientId: string }) {
       <div className="flex gap-1 flex-wrap">
         {SECTIONS.map(s => (
           <button key={s.key} onClick={() => setSection(s.key)}
-            className={`text-xs px-4 py-2 rounded-lg border transition whitespace-nowrap ${section === s.key ? "bg-zinc-100 text-zinc-900 border-zinc-100 font-semibold" : "border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"}`}>
+            className={`text-xs px-4 py-2 rounded-lg border transition whitespace-nowrap ${section === s.key ? "bg-zinc-100 text-zinc-900 border-zinc-100 font-semibold" : "border-zinc-300 text-zinc-500 hover:border-zinc-500 hover:text-zinc-800"}`}>
             {s.label}
           </button>
         ))}
@@ -1038,50 +1038,50 @@ function AuditTab({ clientId }: { clientId: string }) {
         <div className="space-y-4">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
-              { label: "Critical Findings", val: counts.Critical, sub: "require immediate action", color: "text-red-400", border: "border-red-500/30" },
-              { label: "Warnings", val: counts.Warning, sub: "review recommended", color: "text-amber-400", border: "border-amber-500/30" },
+              { label: "Critical Findings", val: counts.Critical, sub: "require immediate action", color: "text-red-600", border: "border-red-500/30" },
+              { label: "Warnings", val: counts.Warning, sub: "review recommended", color: "text-amber-600", border: "border-amber-500/30" },
               { label: "Info Flags", val: counts.Info, sub: "data quality checks", color: "text-sky-400", border: "border-sky-500/30" },
-              { label: "Total Findings", val: findings.length, sub: "across all categories", color: "text-white", border: "border-zinc-700" },
+              { label: "Total Findings", val: findings.length, sub: "across all categories", color: "text-black", border: "border-zinc-300" },
             ].map(c => (
-              <div key={c.label} className={`bg-zinc-900 border ${c.border} rounded-xl p-4`}>
+              <div key={c.label} className={`bg-white border ${c.border} rounded-xl p-4`}>
                 <p className="text-xs text-zinc-500 mb-1">{c.label}</p>
                 <p className={`text-2xl font-black ${c.color}`}>{c.val}</p>
-                <p className="text-xs text-zinc-600 mt-1">{c.sub}</p>
+                <p className="text-xs text-zinc-400 mt-1">{c.sub}</p>
               </div>
             ))}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
             {[
-              { label: "Overdue Receivables", val: inrFmt(overdueTotal), sub: "outstanding past due date", color: "text-red-300" },
-              { label: "Est. TDS Exposure", val: inrFmt(tdsExposure), sub: "undeducted TDS liability", color: "text-violet-300" },
-              { label: "Unmatched Advances", val: inrFmt(unmatchedAdv), sub: "payment received, no invoice", color: "text-amber-300" },
-              { label: "MSME At-Risk", val: inrFmt(msmeRisk), sub: "43B(h) disallowance exposure", color: "text-orange-300" },
+              { label: "Overdue Receivables", val: inrFmt(overdueTotal), sub: "outstanding past due date", color: "text-red-600" },
+              { label: "Est. TDS Exposure", val: inrFmt(tdsExposure), sub: "undeducted TDS liability", color: "text-violet-600" },
+              { label: "Unmatched Advances", val: inrFmt(unmatchedAdv), sub: "payment received, no invoice", color: "text-amber-600" },
+              { label: "MSME At-Risk", val: inrFmt(msmeRisk), sub: "43B(h) disallowance exposure", color: "text-orange-600" },
             ].map(c => (
-              <div key={c.label} className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+              <div key={c.label} className="bg-white border border-zinc-200 rounded-xl p-4">
                 <p className="text-xs text-zinc-500 mb-1">{c.label}</p>
                 <p className={`text-xl font-bold ${c.color}`}>{c.val}</p>
-                <p className="text-xs text-zinc-600 mt-1">{c.sub}</p>
+                <p className="text-xs text-zinc-400 mt-1">{c.sub}</p>
               </div>
             ))}
           </div>
 
           {/* Category breakdown */}
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-            <div className="px-4 py-3 border-b border-zinc-800">
-              <p className="text-sm font-semibold text-zinc-200">Findings by Category</p>
+          <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden">
+            <div className="px-4 py-3 border-b border-zinc-200">
+              <p className="text-sm font-semibold text-zinc-800">Findings by Category</p>
             </div>
             {allCats.filter(c => c !== "All").map(cat => {
               const catFindings = findings.filter(f => f.category === cat);
               const crit = catFindings.filter(f => f.severity === "Critical").length;
               const warn = catFindings.filter(f => f.severity === "Warning").length;
               return (
-                <div key={cat} className="flex items-center justify-between px-4 py-3 border-b border-zinc-800/50 last:border-0 hover:bg-zinc-800/30">
+                <div key={cat} className="flex items-center justify-between px-4 py-3 border-b border-zinc-100 last:border-0 hover:bg-zinc-100/30">
                   <div className="flex items-center gap-3">
-                    <span className="text-sm text-zinc-200 font-medium w-40">{cat}</span>
+                    <span className="text-sm text-zinc-800 font-medium w-40">{cat}</span>
                     <span className="text-xs text-zinc-500">{catFindings.length} finding{catFindings.length !== 1 ? "s" : ""}</span>
                   </div>
                   <div className="flex gap-2">
-                    {crit > 0 && <span className="text-xs bg-red-500 text-white px-2 py-0.5 rounded-full font-bold">{crit} Critical</span>}
+                    {crit > 0 && <span className="text-xs bg-red-500 text-black px-2 py-0.5 rounded-full font-bold">{crit} Critical</span>}
                     {warn > 0 && <span className="text-xs bg-amber-400 text-black px-2 py-0.5 rounded-full font-bold">{warn} Warning</span>}
                   </div>
                 </div>
@@ -1089,7 +1089,7 @@ function AuditTab({ clientId }: { clientId: string }) {
             })}
           </div>
 
-          <p className="text-xs text-zinc-600 pb-2">
+          <p className="text-xs text-zinc-400 pb-2">
             Phase 2 (once synced): PO vs Bills vs GRN · Journal entry scrutiny · PT / PF (requires payroll sync) · 206C TCS · Advance tax estimation
           </p>
         </div>
@@ -1100,12 +1100,12 @@ function AuditTab({ clientId }: { clientId: string }) {
         <div className="space-y-3">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-2">
             {[
-              { label: "Total Invoiced", val: inrFmt(invoices.reduce((s, i) => s + i.total, 0)), color: "text-white" },
-              { label: "Total Received", val: inrFmt(payments.reduce((s, p) => s + p.amount, 0)), color: "text-emerald-400" },
-              { label: "Outstanding", val: inrFmt(invoices.reduce((s, i) => s + i.balance, 0)), color: "text-amber-400" },
-              { label: "GST Charged", val: inrFmt(invoices.reduce((s, i) => s + i.tax_total, 0)), color: "text-blue-400" },
+              { label: "Total Invoiced", val: inrFmt(invoices.reduce((s, i) => s + i.total, 0)), color: "text-black" },
+              { label: "Total Received", val: inrFmt(payments.reduce((s, p) => s + p.amount, 0)), color: "text-emerald-600" },
+              { label: "Outstanding", val: inrFmt(invoices.reduce((s, i) => s + i.balance, 0)), color: "text-amber-600" },
+              { label: "GST Charged", val: inrFmt(invoices.reduce((s, i) => s + i.tax_total, 0)), color: "text-blue-600" },
             ].map(c => (
-              <div key={c.label} className="bg-zinc-900 border border-zinc-800 rounded-xl p-3">
+              <div key={c.label} className="bg-white border border-zinc-200 rounded-xl p-3">
                 <p className="text-xs text-zinc-500">{c.label}</p>
                 <p className={`text-lg font-bold ${c.color}`}>{c.val}</p>
               </div>
@@ -1117,15 +1117,15 @@ function AuditTab({ clientId }: { clientId: string }) {
             const pct = c.invoiced > 0 ? Math.min(Math.round((c.received / c.invoiced) * 100), 100) : 0;
             const custFindings = findings.filter(f => f.party === c.name);
             return (
-              <div key={c.name} className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-                <div className="flex items-start justify-between p-4 cursor-pointer hover:bg-zinc-800/40"
+              <div key={c.name} className="bg-white border border-zinc-200 rounded-xl overflow-hidden">
+                <div className="flex items-start justify-between p-4 cursor-pointer hover:bg-zinc-50"
                   onClick={() => setExpandedCustomer(isOpen ? null : c.name)}>
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <span className="font-semibold text-zinc-100">{c.name}</span>
-                      {c.gstNumber && <span className="text-xs font-mono text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded">{c.gstNumber}</span>}
+                      <span className="font-semibold text-zinc-900">{c.name}</span>
+                      {c.gstNumber && <span className="text-xs font-mono text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded">{c.gstNumber}</span>}
                       {custFindings.filter(f => f.severity === "Critical").length > 0 && (
-                        <span className="text-xs bg-red-500 text-white px-2 py-0.5 rounded-full font-bold">
+                        <span className="text-xs bg-red-500 text-black px-2 py-0.5 rounded-full font-bold">
                           {custFindings.filter(f => f.severity === "Critical").length} Critical
                         </span>
                       )}
@@ -1136,20 +1136,20 @@ function AuditTab({ clientId }: { clientId: string }) {
                       )}
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-1 text-xs mt-2">
-                      <div><span className="text-zinc-600">SOs</span> <span className="text-zinc-300">{c.soCount} ({inrFmt(c.soTotal)})</span></div>
-                      <div><span className="text-zinc-600">Invoiced</span> <span className="text-zinc-300">{c.invoiceCount} inv · {inrFmt(c.invoiced)}</span></div>
-                      <div><span className="text-zinc-600">Received</span> <span className="text-emerald-400">{inrFmt(c.received)}</span></div>
-                      <div><span className="text-zinc-600">Outstanding</span> <span className={c.outstanding > 0 ? "text-amber-400" : "text-emerald-400"}>{inrFmt(c.outstanding)}</span></div>
+                      <div><span className="text-zinc-400">SOs</span> <span className="text-zinc-700">{c.soCount} ({inrFmt(c.soTotal)})</span></div>
+                      <div><span className="text-zinc-400">Invoiced</span> <span className="text-zinc-700">{c.invoiceCount} inv · {inrFmt(c.invoiced)}</span></div>
+                      <div><span className="text-zinc-400">Received</span> <span className="text-emerald-600">{inrFmt(c.received)}</span></div>
+                      <div><span className="text-zinc-400">Outstanding</span> <span className={c.outstanding > 0 ? "text-amber-600" : "text-emerald-600"}>{inrFmt(c.outstanding)}</span></div>
                     </div>
                     <div className="flex items-center gap-2 mt-2">
-                      <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                      <div className="flex-1 h-1.5 bg-zinc-100 rounded-full overflow-hidden">
                         <div className={`h-full rounded-full ${pct >= 100 ? "bg-emerald-400" : pct >= 60 ? "bg-amber-400" : "bg-red-400"}`}
                           style={{ width: `${pct}%` }} />
                       </div>
                       <span className="text-xs text-zinc-500 w-12 text-right">{pct}% paid</span>
                     </div>
                   </div>
-                  <span className="text-zinc-600 text-xs ml-4 mt-1 select-none">{isOpen ? "▲" : "▼"}</span>
+                  <span className="text-zinc-400 text-xs ml-4 mt-1 select-none">{isOpen ? "▲" : "▼"}</span>
                 </div>
 
                 {isOpen && (() => {
@@ -1160,7 +1160,7 @@ function AuditTab({ clientId }: { clientId: string }) {
                     if (d <= 0) return null;
                     if (d <= 30) return { label: "0–30d", color: "text-yellow-400" };
                     if (d <= 60) return { label: "31–60d", color: "text-orange-400" };
-                    if (d <= 90) return { label: "61–90d", color: "text-red-400" };
+                    if (d <= 90) return { label: "61–90d", color: "text-red-600" };
                     return { label: "90d+", color: "text-red-600 font-bold" };
                   };
                   const pendingInvoices = c.invoices.filter(i => i.balance > 0);
@@ -1173,17 +1173,17 @@ function AuditTab({ clientId }: { clientId: string }) {
                     { label: "90d+", amt: pendingInvoices.filter(i => { const d = Math.floor((today2.getTime() - new Date(i.due_date).getTime()) / 86400000); return d > 90; }).reduce((s,i) => s+i.balance, 0) },
                   ].filter(b => b.amt > 0);
                   return (
-                    <div className="border-t border-zinc-800 divide-y divide-zinc-800/50">
+                    <div className="border-t border-zinc-200 divide-y divide-zinc-800/50">
 
                       {/* Ageing summary */}
                       {buckets.length > 0 && (
                         <div className="px-4 py-3">
-                          <p className="text-xs font-semibold text-zinc-400 mb-2">Overdue Ageing</p>
+                          <p className="text-xs font-semibold text-zinc-500 mb-2">Overdue Ageing</p>
                           <div className="flex flex-wrap gap-3">
                             {buckets.map(b => (
-                              <div key={b.label} className="bg-zinc-800/60 rounded-lg px-3 py-2 text-xs">
+                              <div key={b.label} className="bg-zinc-100 rounded-lg px-3 py-2 text-xs">
                                 <span className="text-zinc-500 block">{b.label}</span>
-                                <span className="text-amber-400 font-bold">{inrFmt(b.amt)}</span>
+                                <span className="text-amber-600 font-bold">{inrFmt(b.amt)}</span>
                               </div>
                             ))}
                           </div>
@@ -1193,13 +1193,13 @@ function AuditTab({ clientId }: { clientId: string }) {
                       {/* Pending Invoices */}
                       {pendingInvoices.length > 0 && (
                         <div className="px-4 py-3">
-                          <p className="text-xs font-semibold text-zinc-400 mb-2">
-                            Pending Invoices <span className="text-amber-400 ml-1">{pendingInvoices.length} · {inrFmt(pendingInvoices.reduce((s,i)=>s+i.balance,0))} outstanding</span>
+                          <p className="text-xs font-semibold text-zinc-500 mb-2">
+                            Pending Invoices <span className="text-amber-600 ml-1">{pendingInvoices.length} · {inrFmt(pendingInvoices.reduce((s,i)=>s+i.balance,0))} outstanding</span>
                           </p>
                           <div className="overflow-x-auto">
                             <table className="w-full text-xs">
                               <thead>
-                                <tr className="text-zinc-600 border-b border-zinc-800">
+                                <tr className="text-zinc-400 border-b border-zinc-200">
                                   <th className="text-left py-1.5 pr-4 font-normal">Invoice #</th>
                                   <th className="text-left py-1.5 pr-4 font-normal">Date</th>
                                   <th className="text-left py-1.5 pr-4 font-normal">Due</th>
@@ -1213,11 +1213,11 @@ function AuditTab({ clientId }: { clientId: string }) {
                                 {pendingInvoices.map(inv => {
                                   const bucket = ageBucket(inv.due_date);
                                   return (
-                                    <tr key={inv.id} className="border-b border-zinc-800/40 hover:bg-zinc-800/20">
-                                      <td className="py-2 pr-4 font-mono text-zinc-300">
+                                    <tr key={inv.id} className="border-b border-zinc-200/40 hover:bg-zinc-100/20">
+                                      <td className="py-2 pr-4 font-mono text-zinc-700">
                                         {inv.invoice_number}
-                                        {inv.total >= 500000 && !inv.reference_number && <span className="ml-1 text-red-400">⚠IRN</span>}
-                                        {!inv.gst_number && inv.tax_total > 0 && <span className="ml-1 text-amber-400">⚠GST</span>}
+                                        {inv.total >= 500000 && !inv.reference_number && <span className="ml-1 text-red-600">⚠IRN</span>}
+                                        {!inv.gst_number && inv.tax_total > 0 && <span className="ml-1 text-amber-600">⚠GST</span>}
                                       </td>
                                       <td className="py-2 pr-4 text-zinc-500">{fmtDate(inv.date)}</td>
                                       <td className="py-2 pr-4">
@@ -1225,9 +1225,9 @@ function AuditTab({ clientId }: { clientId: string }) {
                                         {bucket && <span className={`ml-1.5 text-[10px] ${bucket.color}`}>{bucket.label}</span>}
                                       </td>
                                       <td className="py-2 pr-4"><Badge status={inv.status} /></td>
-                                      <td className="py-2 pr-4 text-right text-zinc-300">{inrFmt(inv.total)}</td>
-                                      <td className="py-2 pr-4 text-right text-blue-400">{inrFmt(inv.tax_total)}</td>
-                                      <td className="py-2 text-right font-semibold text-amber-400">{inrFmt(inv.balance)}</td>
+                                      <td className="py-2 pr-4 text-right text-zinc-700">{inrFmt(inv.total)}</td>
+                                      <td className="py-2 pr-4 text-right text-blue-600">{inrFmt(inv.tax_total)}</td>
+                                      <td className="py-2 text-right font-semibold text-amber-600">{inrFmt(inv.balance)}</td>
                                     </tr>
                                   );
                                 })}
@@ -1240,12 +1240,12 @@ function AuditTab({ clientId }: { clientId: string }) {
                       {/* Paid Invoices (collapsed) */}
                       {paidInvoices.length > 0 && (
                         <div className="px-4 py-3">
-                          <p className="text-xs font-semibold text-zinc-400 mb-2">
+                          <p className="text-xs font-semibold text-zinc-500 mb-2">
                             Cleared Invoices <span className="text-emerald-500 ml-1">{paidInvoices.length} · {inrFmt(paidInvoices.reduce((s,i)=>s+i.total,0))}</span>
                           </p>
                           <div className="space-y-1">
                             {paidInvoices.map(inv => (
-                              <div key={inv.id} className="flex items-center justify-between text-xs text-zinc-600">
+                              <div key={inv.id} className="flex items-center justify-between text-xs text-zinc-400">
                                 <div className="flex items-center gap-2">
                                   <span className="font-mono">{inv.invoice_number}</span>
                                   <span>{fmtDate(inv.date)}</span>
@@ -1261,27 +1261,27 @@ function AuditTab({ clientId }: { clientId: string }) {
                       {/* Sales Orders */}
                       {c.sos.length > 0 && (
                         <div className="px-4 py-3">
-                          <p className="text-xs font-semibold text-zinc-400 mb-2">Sales Orders</p>
+                          <p className="text-xs font-semibold text-zinc-500 mb-2">Sales Orders</p>
                           <div className="space-y-1.5">
                             {c.sos.map(so => {
                               const soInvoiced = c.invoices.reduce((s,i) => s+i.total, 0);
                               const soReceived = c.received;
                               const gap = so.total - soInvoiced;
                               const matchStatus =
-                                soInvoiced === 0 && soReceived > 0 ? { label: "⚠ Payment received, no invoice", color: "text-red-400" } :
-                                soInvoiced > 0 && soReceived > soInvoiced * 1.05 ? { label: "⚠ Received > Invoiced (excess advance)", color: "text-amber-400" } :
-                                soInvoiced >= so.total * 0.95 ? { label: "✓ Fully invoiced", color: "text-emerald-400" } :
-                                gap > 0 ? { label: `${inrFmt(gap)} uninvoiced`, color: "text-zinc-400" } :
-                                { label: "—", color: "text-zinc-600" };
+                                soInvoiced === 0 && soReceived > 0 ? { label: "⚠ Payment received, no invoice", color: "text-red-600" } :
+                                soInvoiced > 0 && soReceived > soInvoiced * 1.05 ? { label: "⚠ Received > Invoiced (excess advance)", color: "text-amber-600" } :
+                                soInvoiced >= so.total * 0.95 ? { label: "✓ Fully invoiced", color: "text-emerald-600" } :
+                                gap > 0 ? { label: `${inrFmt(gap)} uninvoiced`, color: "text-zinc-500" } :
+                                { label: "—", color: "text-zinc-400" };
                               return (
-                                <div key={so.id} className="flex items-center justify-between text-xs bg-zinc-800/30 rounded-lg px-3 py-2">
+                                <div key={so.id} className="flex items-center justify-between text-xs bg-zinc-100/30 rounded-lg px-3 py-2">
                                   <div className="flex items-center gap-2">
-                                    <span className="font-mono text-zinc-400">{so.salesorder_number}</span>
-                                    <span className="text-zinc-600">{fmtDate(so.date)}</span>
+                                    <span className="font-mono text-zinc-500">{so.salesorder_number}</span>
+                                    <span className="text-zinc-400">{fmtDate(so.date)}</span>
                                     <Badge status={so.status} />
                                   </div>
                                   <div className="flex items-center gap-4 text-right">
-                                    <span className="text-zinc-400">{inrFmt(so.total)}</span>
+                                    <span className="text-zinc-500">{inrFmt(so.total)}</span>
                                     <span className={matchStatus.color}>{matchStatus.label}</span>
                                   </div>
                                 </div>
@@ -1294,19 +1294,19 @@ function AuditTab({ clientId }: { clientId: string }) {
                       {/* Payments received */}
                       {c.payments.length > 0 && (
                         <div className="px-4 py-3">
-                          <p className="text-xs font-semibold text-zinc-400 mb-2">
-                            Payments Received <span className="text-emerald-400 ml-1">{inrFmt(c.received)}</span>
+                          <p className="text-xs font-semibold text-zinc-500 mb-2">
+                            Payments Received <span className="text-emerald-600 ml-1">{inrFmt(c.received)}</span>
                           </p>
                           <div className="space-y-1">
                             {c.payments.map(p => (
                               <div key={p.id} className="flex items-center justify-between text-xs">
                                 <div className="flex items-center gap-2">
                                   <span className="font-mono text-zinc-500">{p.payment_number}</span>
-                                  <span className="text-zinc-600">{fmtDate(p.date)}</span>
-                                  <span className="text-zinc-700 bg-zinc-800 px-1.5 py-0.5 rounded text-[10px]">{p.payment_mode}</span>
-                                  {p.reference_number && <span className="text-zinc-600 text-[10px]">Ref: {p.reference_number}</span>}
+                                  <span className="text-zinc-400">{fmtDate(p.date)}</span>
+                                  <span className="text-zinc-700 bg-zinc-100 px-1.5 py-0.5 rounded text-[10px]">{p.payment_mode}</span>
+                                  {p.reference_number && <span className="text-zinc-400 text-[10px]">Ref: {p.reference_number}</span>}
                                 </div>
-                                <span className="text-emerald-400 font-semibold">{inrFmt(p.amount)}</span>
+                                <span className="text-emerald-600 font-semibold">{inrFmt(p.amount)}</span>
                               </div>
                             ))}
                           </div>
@@ -1316,7 +1316,7 @@ function AuditTab({ clientId }: { clientId: string }) {
                       {/* Compliance flags */}
                       {custFindings.length > 0 && (
                         <div className="px-4 py-3">
-                          <p className="text-xs font-semibold text-zinc-400 mb-2">Compliance Flags</p>
+                          <p className="text-xs font-semibold text-zinc-500 mb-2">Compliance Flags</p>
                           <div className="space-y-1.5">
                             {custFindings.map(f => (
                               <div key={f.id} className={`text-xs rounded-lg px-3 py-2 border ${SEVSTYLE[f.severity].border} ${SEVSTYLE[f.severity].bg}`}>
@@ -1342,29 +1342,29 @@ function AuditTab({ clientId }: { clientId: string }) {
       {(section === "matching" || section === "compliance" || section === "expenses" || section === "payables") && (
         <div className="space-y-4">
           {section === "matching" && (
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-xs text-zinc-400 leading-relaxed">
-              <p className="font-semibold text-zinc-300 mb-1">What is being checked</p>
-              <p><span className="text-white">2-Way:</span> Sales Order exists + Payment received → but no Invoice raised (advance sitting unaccounted)</p>
-              <p><span className="text-white">3-Way:</span> SO + Payment + Invoice all exist → but payment &gt; invoiced (partial invoicing gap)</p>
-              <p><span className="text-white">Uninvoiced SO:</span> SO raised, no payment, no invoice → delivery may have happened without billing</p>
-              <p className="mt-1 text-zinc-600">Phase 2 will add: PO → Bill → Payment matching and GRN reconciliation once purchase data is synced.</p>
+            <div className="bg-white border border-zinc-200 rounded-xl p-4 text-xs text-zinc-500 leading-relaxed">
+              <p className="font-semibold text-zinc-700 mb-1">What is being checked</p>
+              <p><span className="text-black">2-Way:</span> Sales Order exists + Payment received → but no Invoice raised (advance sitting unaccounted)</p>
+              <p><span className="text-black">3-Way:</span> SO + Payment + Invoice all exist → but payment &gt; invoiced (partial invoicing gap)</p>
+              <p><span className="text-black">Uninvoiced SO:</span> SO raised, no payment, no invoice → delivery may have happened without billing</p>
+              <p className="mt-1 text-zinc-400">Phase 2 will add: PO → Bill → Payment matching and GRN reconciliation once purchase data is synced.</p>
             </div>
           )}
           {section === "compliance" && (
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-xs text-zinc-400 leading-relaxed">
-              <p className="font-semibold text-zinc-300 mb-1">Statutory checks running</p>
-              <p><span className="text-white">TDS:</span> 192 (Salary), 193 (Securities), 194/194A (Interest/Dividend), 194C (Contractors @2%), 194D (Insurance), 194G/H (Commission @5%), 194I/IB (Rent @10%), 194IC (JDA), 194J (Professional @10%), 194K (MF), 194LA (Land), 194M (Individual contracts), 194O (e-Commerce @1%), 194Q (Goods purchase @0.1% above ₹50L), 195 (NRI payments), 206AA (No PAN)</p>
-              <p className="mt-1"><span className="text-white">GST:</span> ITC blocked u/s 17(5), B2B missing GSTIN, IRN missing on invoices &gt;₹5L</p>
-              <p className="mt-1"><span className="text-white">RCM:</span> Legal services, GTA, sponsorship, director fees, security services, vehicle rental</p>
-              <p className="mt-1 text-zinc-600">Phase 2: Journal entry scrutiny, 206C TCS, advance tax estimation, PT/PF once payroll data synced.</p>
+            <div className="bg-white border border-zinc-200 rounded-xl p-4 text-xs text-zinc-500 leading-relaxed">
+              <p className="font-semibold text-zinc-700 mb-1">Statutory checks running</p>
+              <p><span className="text-black">TDS:</span> 192 (Salary), 193 (Securities), 194/194A (Interest/Dividend), 194C (Contractors @2%), 194D (Insurance), 194G/H (Commission @5%), 194I/IB (Rent @10%), 194IC (JDA), 194J (Professional @10%), 194K (MF), 194LA (Land), 194M (Individual contracts), 194O (e-Commerce @1%), 194Q (Goods purchase @0.1% above ₹50L), 195 (NRI payments), 206AA (No PAN)</p>
+              <p className="mt-1"><span className="text-black">GST:</span> ITC blocked u/s 17(5), B2B missing GSTIN, IRN missing on invoices &gt;₹5L</p>
+              <p className="mt-1"><span className="text-black">RCM:</span> Legal services, GTA, sponsorship, director fees, security services, vehicle rental</p>
+              <p className="mt-1 text-zinc-400">Phase 2: Journal entry scrutiny, 206C TCS, advance tax estimation, PT/PF once payroll data synced.</p>
             </div>
           )}
           {section === "payables" && (
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-xs text-zinc-400 leading-relaxed">
-              <p className="font-semibold text-zinc-300 mb-1">Payable Ageing & MSME checks</p>
-              <p><span className="text-white">MSME 43B(h):</span> Payments to MSME vendors outstanding beyond 45 days are disallowed as deduction in current FY under Income Tax Act. Interest @ 3x RBI bank rate (compounded monthly) applies under MSMED Act Sec 16.</p>
-              <p className="mt-1"><span className="text-white">MCA Form-1:</span> Companies with MSME outstanding &gt;45 days must file MSME Form-1 with MCA twice a year (Apr–Sep, Oct–Mar).</p>
-              <p className="mt-1"><span className="text-white">Payable Ageing:</span> All expense-status "pending/open/unbilled" entries grouped by vendor with oldest transaction date as anchor. Buckets: 0–30d, 31–45d (MSME breach), 46–60d, 61–90d, 90d+.</p>
+            <div className="bg-white border border-zinc-200 rounded-xl p-4 text-xs text-zinc-500 leading-relaxed">
+              <p className="font-semibold text-zinc-700 mb-1">Payable Ageing & MSME checks</p>
+              <p><span className="text-black">MSME 43B(h):</span> Payments to MSME vendors outstanding beyond 45 days are disallowed as deduction in current FY under Income Tax Act. Interest @ 3x RBI bank rate (compounded monthly) applies under MSMED Act Sec 16.</p>
+              <p className="mt-1"><span className="text-black">MCA Form-1:</span> Companies with MSME outstanding &gt;45 days must file MSME Form-1 with MCA twice a year (Apr–Sep, Oct–Mar).</p>
+              <p className="mt-1"><span className="text-black">Payable Ageing:</span> All expense-status "pending/open/unbilled" entries grouped by vendor with oldest transaction date as anchor. Buckets: 0–30d, 31–45d (MSME breach), 46–60d, 61–90d, 90d+.</p>
             </div>
           )}
 
@@ -1373,7 +1373,7 @@ function AuditTab({ clientId }: { clientId: string }) {
             <span className="text-xs text-zinc-500">Severity:</span>
             {["All","Critical","Warning","Info"].map(s => (
               <button key={s} onClick={() => setFilterSev(s)}
-                className={`text-xs px-3 py-1 rounded-full border transition ${filterSev === s ? "bg-zinc-200 text-zinc-900 border-zinc-200" : "border-zinc-700 text-zinc-400 hover:border-zinc-500"}`}>
+                className={`text-xs px-3 py-1 rounded-full border transition ${filterSev === s ? "bg-zinc-200 text-zinc-900 border-zinc-200" : "border-zinc-300 text-zinc-500 hover:border-zinc-500"}`}>
                 {s}
               </button>
             ))}
@@ -1381,19 +1381,19 @@ function AuditTab({ clientId }: { clientId: string }) {
               <span className="text-xs text-zinc-500 ml-2">Category:</span>
               {allCats.map(c => (
                 <button key={c} onClick={() => setFilterCat(c)}
-                  className={`text-xs px-3 py-1 rounded-full border transition ${filterCat === c ? "bg-zinc-200 text-zinc-900 border-zinc-200" : "border-zinc-700 text-zinc-400 hover:border-zinc-500"}`}>
+                  className={`text-xs px-3 py-1 rounded-full border transition ${filterCat === c ? "bg-zinc-200 text-zinc-900 border-zinc-200" : "border-zinc-300 text-zinc-500 hover:border-zinc-500"}`}>
                   {c}
                 </button>
               ))}
             </>}
           </div>
 
-          <p className="text-xs text-zinc-600">{filteredFindings.length} finding{filteredFindings.length !== 1 ? "s" : ""}</p>
+          <p className="text-xs text-zinc-400">{filteredFindings.length} finding{filteredFindings.length !== 1 ? "s" : ""}</p>
 
           {filteredFindings.length === 0 && (
             <div className="text-center py-16 text-zinc-500">
               <p className="text-3xl mb-3">✓</p>
-              <p className="font-medium text-zinc-300">No issues found in this category</p>
+              <p className="font-medium text-zinc-700">No issues found in this category</p>
             </div>
           )}
 
@@ -1414,21 +1414,21 @@ function AuditTab({ clientId }: { clientId: string }) {
                       <p className={`font-semibold text-sm ${s.text}`}>{f.issue}</p>
                       <p className="text-xs text-zinc-500 mt-0.5 truncate">{f.party}{f.account !== "—" ? ` · ${f.account}` : ""}</p>
                     </div>
-                    <span className="text-zinc-600 text-xs ml-2 mt-1 select-none">{isOpen ? "▲" : "▼"}</span>
+                    <span className="text-zinc-400 text-xs ml-2 mt-1 select-none">{isOpen ? "▲" : "▼"}</span>
                   </div>
                   {isOpen && (
                     <div className="border-t border-white/5 px-4 pb-4 pt-3 space-y-3">
                       <div className="grid grid-cols-2 gap-2 text-xs">
-                        <div><span className="text-zinc-600 block">Reference</span><span className="text-zinc-200 font-mono">{f.ref}</span></div>
-                        <div><span className="text-zinc-600 block">Amount</span><span className="text-zinc-200 font-bold">{inrFmt(f.amount)}</span></div>
-                        <div><span className="text-zinc-600 block">Party</span><span className="text-zinc-200">{f.party}</span></div>
-                        <div><span className="text-zinc-600 block">Account</span><span className="text-zinc-200">{f.account}</span></div>
+                        <div><span className="text-zinc-400 block">Reference</span><span className="text-zinc-800 font-mono">{f.ref}</span></div>
+                        <div><span className="text-zinc-400 block">Amount</span><span className="text-zinc-800 font-bold">{inrFmt(f.amount)}</span></div>
+                        <div><span className="text-zinc-400 block">Party</span><span className="text-zinc-800">{f.party}</span></div>
+                        <div><span className="text-zinc-400 block">Account</span><span className="text-zinc-800">{f.account}</span></div>
                       </div>
-                      <div className="bg-black/20 rounded-lg p-3 text-xs text-zinc-300 leading-relaxed">
+                      <div className="bg-zinc-50 rounded-lg p-3 text-xs text-zinc-700 leading-relaxed">
                         <span className="text-zinc-500 block mb-1">Finding Detail</span>
                         {f.detail}
                       </div>
-                      <div className="bg-emerald-950/40 border border-emerald-800/30 rounded-lg p-3 text-xs text-emerald-300 leading-relaxed">
+                      <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-700 leading-relaxed">
                         <span className="text-emerald-600 block mb-1 font-bold">▶ Recommended Action</span>
                         {f.action}
                       </div>
@@ -1457,12 +1457,15 @@ const SUB_MODULES: { key: SubModule; label: string }[] = [
 ];
 
 function ClientModule({ client, onBack }: { client: Client; onBack: () => void }) {
-  const [activeTab, setActiveTab] = useState<SubModule>(() => {
-    if (typeof window === "undefined") return "invoices";
-    const tab = window.location.hash.replace("#","").split("|")[1];
-    const valid = ["invoices","sales_orders","estimates","payments","expenses","audit"];
-    return (tab && valid.includes(tab) ? tab : "invoices") as SubModule;
-  });
+  const [activeTab, setActiveTab] = useState<SubModule>("invoices");
+
+  useEffect(() => {
+    try {
+      const tab = window.location.hash.replace("#","").split("|")[1];
+      const valid = ["invoices","sales_orders","estimates","payments","expenses","audit"];
+      if (tab && valid.includes(tab)) setActiveTab(tab as SubModule);
+    } catch {}
+  }, []);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
@@ -1494,38 +1497,39 @@ function ClientModule({ client, onBack }: { client: Client; onBack: () => void }
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 p-6 font-sans">
-      <div className="max-w-6xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <img src={COMPANY_LOGO} alt="CA India" className="h-8 w-auto object-contain" />
-            <span className="text-zinc-700">|</span>
-            <button onClick={onBack} className="text-zinc-500 hover:text-zinc-300 transition text-sm">← All Clients</button>
+    <div className="min-h-screen bg-white text-black font-sans">
+      {/* Top bar */}
+      <div className="border-b border-zinc-200 px-8 py-3 flex items-center justify-between bg-white sticky top-0 z-10">
+        <div className="flex items-center gap-4">
+          <img src={COMPANY_LOGO} alt="CA India" className="h-10 w-auto object-contain" />
+          <div className="border-l border-zinc-200 pl-4 flex items-center gap-2">
+            <button onClick={onBack} className="text-zinc-500 hover:text-black transition text-sm">← All Clients</button>
             <span className="text-zinc-700">/</span>
             <div>
-              <h1 className="text-xl font-bold text-white">{client.name}</h1>
-              <span className={`text-xs px-2 py-0.5 rounded-full ${client.source === "zoho" ? "bg-blue-900 text-blue-300" : "bg-purple-900 text-purple-300"}`}>
+              <h1 className="text-base font-bold text-black">{client.name}</h1>
+              <span className={`text-xs px-2 py-0.5 rounded border ${client.source === "zoho" ? "border-blue-200 text-blue-600 bg-blue-50" : "border-purple-200 text-purple-600 bg-purple-50"}`}>
                 {client.source.toUpperCase()}
               </span>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {syncMsg && <span className={`text-xs ${syncMsg.startsWith("✓") ? "text-emerald-400" : "text-red-400"}`}>{syncMsg}</span>}
-            {client.source === "zoho" && (
-              <button onClick={handleSync} disabled={syncing}
-                className="text-xs px-3 py-1.5 rounded-md bg-blue-700 hover:bg-blue-600 text-white transition disabled:opacity-50">
-                {syncing ? "Syncing..." : "⟳ Sync Zoho"}
-              </button>
-            )}
-          </div>
         </div>
+        <div className="flex items-center gap-3">
+          {syncMsg && <span className={`text-xs font-medium ${syncMsg.startsWith("✓") ? "text-emerald-600" : "text-red-500"}`}>{syncMsg}</span>}
+          {client.source === "zoho" && (
+            <button onClick={handleSync} disabled={syncing}
+              className="text-xs px-3 py-1.5 rounded border border-zinc-300 hover:bg-zinc-100 text-zinc-700 transition disabled:opacity-50">
+              {syncing ? "Syncing..." : "⟳ Sync Zoho"}
+            </button>
+          )}
+        </div>
+      </div>
 
+      <div className="max-w-6xl mx-auto px-8 py-6 space-y-5">
         {/* Sub-module tabs */}
-        <div className="flex gap-1 bg-zinc-900 border border-zinc-800 rounded-xl p-1 w-fit overflow-x-auto">
+        <div className="flex gap-1 border-b border-zinc-200 overflow-x-auto">
           {SUB_MODULES.map(m => (
             <button key={m.key} onClick={() => { setActiveTab(m.key); const clientId = window.location.hash.replace("#","").split("|")[0]; window.location.hash = clientId + "|" + m.key; }}
-              className={`text-sm px-4 py-1.5 rounded-lg transition whitespace-nowrap ${activeTab === m.key ? "bg-zinc-700 text-white" : "text-zinc-500 hover:text-zinc-300"}`}>
+              className={`text-sm px-4 py-2.5 whitespace-nowrap transition border-b-2 -mb-px font-medium ${activeTab === m.key ? "border-black text-black" : "border-transparent text-zinc-500 hover:text-zinc-700"}`}>
               {m.label}
             </button>
           ))}
@@ -1579,7 +1583,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
 
   if ((loading || !initialized) && activeClientId) {
     return (
-      <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center">
+      <div className="min-h-screen bg-white text-zinc-900 flex items-center justify-center">
         <p className="text-zinc-500 animate-pulse">Loading...</p>
       </div>
     );
@@ -1601,11 +1605,11 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
           <img src={COMPANY_LOGO} alt="CA India" className="h-10 w-auto object-contain" />
           <div className="border-l border-zinc-200 pl-3">
             <p className="text-sm font-bold text-zinc-900">{COMPANY_NAME}</p>
-            <p className="text-xs text-zinc-400">Finance Dashboard · {today}</p>
+            <p className="text-xs text-zinc-500">Finance Dashboard · {today}</p>
           </div>
         </div>
         <button onClick={onLogout}
-          className="text-xs px-3 py-1.5 rounded border border-zinc-300 hover:bg-zinc-100 text-zinc-600 transition">
+          className="text-xs px-3 py-1.5 rounded border border-zinc-300 hover:bg-zinc-100 text-zinc-400 transition">
           Sign Out
         </button>
       </div>
@@ -1614,12 +1618,12 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       <div className="max-w-5xl mx-auto px-8 py-8">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-semibold text-zinc-500 uppercase tracking-widest">Clients</h2>
-          <span className="text-xs text-zinc-400">{filtered.length} of {clients.length} entities</span>
+          <span className="text-xs text-zinc-500">{filtered.length} of {clients.length} entities</span>
         </div>
 
         {/* Search bar */}
         <div className="relative mb-4">
-          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
           <input
@@ -1631,25 +1635,25 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
           />
           {search && (
             <button onClick={() => setSearch("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-black text-lg leading-none">
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-black text-lg leading-none">
               ×
             </button>
           )}
         </div>
 
         {loading ? (
-          <div className="text-center py-20 text-zinc-400 text-sm">Loading...</div>
+          <div className="text-center py-20 text-zinc-500 text-sm">Loading...</div>
         ) : (
           <div className="border border-zinc-200 rounded-xl overflow-hidden">
             {/* Table header */}
-            <div className="grid grid-cols-12 bg-zinc-50 border-b border-zinc-200 px-6 py-2.5 text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+            <div className="grid grid-cols-12 bg-zinc-50 border-b border-zinc-200 px-6 py-2.5 text-xs font-semibold text-zinc-500 uppercase tracking-wider">
               <div className="col-span-9">Client Name</div>
               <div className="col-span-2">Source</div>
               <div className="col-span-1"></div>
             </div>
             {/* Client rows */}
             {filtered.length === 0 ? (
-              <div className="text-center py-12 text-zinc-400 text-sm">
+              <div className="text-center py-12 text-zinc-500 text-sm">
                 No clients found for &ldquo;{search}&rdquo;
               </div>
             ) : filtered.map((client) => (
@@ -1659,7 +1663,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
                 className="w-full grid grid-cols-12 items-center px-6 py-4 text-left hover:bg-zinc-50 transition border-b border-zinc-100 last:border-0 group"
               >
                 <div className="col-span-9 flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-black text-white flex items-center justify-center text-xs font-bold flex-shrink-0">
+                  <div className="w-8 h-8 rounded-lg bg-black text-black flex items-center justify-center text-xs font-bold flex-shrink-0">
                     {client.name?.charAt(0).toUpperCase()}
                   </div>
                   <span className="font-semibold text-black text-sm group-hover:underline">{client.name}</span>
@@ -1673,7 +1677,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
                     {client.source?.toUpperCase()}
                   </span>
                 </div>
-                <div className="col-span-1 text-right text-zinc-300 group-hover:text-black transition text-lg">
+                <div className="col-span-1 text-right text-zinc-700 group-hover:text-black transition text-lg">
                   →
                 </div>
               </button>
@@ -1692,7 +1696,7 @@ export default function Home() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   if (!mounted) return (
-    <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+    <div className="min-h-screen bg-white flex items-center justify-center">
       <p className="text-zinc-500 text-sm animate-pulse">Loading...</p>
     </div>
   );
@@ -1710,7 +1714,7 @@ function HomeInner() {
 
   if (session === null) {
     return (
-      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+      <div className="min-h-screen bg-white flex items-center justify-center">
         <p className="text-zinc-500 text-sm">Loading...</p>
       </div>
     );

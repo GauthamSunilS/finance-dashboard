@@ -45,7 +45,7 @@ type Journal = { id: string; journal_date: string; entry_number: string | null; 
 type Module = "accounting" | "audit" | "compliance";
 type AcctSection = "invoices" | "sales_orders" | "estimates" | "payments" | "expenses" | "purchases" | "bills" | "vendor_payments" | "journals";
 type AuditSection = "overview" | "customers" | "so_match" | "po_match" | "gst" | "tds" | "findings";
-type CompSection = "summary" | "gst_filing" | "tds_filing" | "pt_pf" | "it_filing";
+type CompSection = "client_report" | "summary" | "gst_filing" | "tds_filing" | "pt_pf" | "it_filing";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function fmt(n: number, currency?: string | null) {
@@ -1492,11 +1492,272 @@ function AuditModule({ orgId, initSection = "" }: { orgId: string; initSection?:
   );
 }
 
+
+// ─── CLIENT SUMMARY (Presentation-ready one-pager) ───────────────────────────
+function ClientSummaryReport({ orgId, clientName }: { orgId: string; clientName: string }) {
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [bills, setBills] = useState<Bill[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [fy, setFy] = useState("All");
+  const today = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" });
+
+  useEffect(() => {
+    Promise.all([
+      supabase.from("finance_dashboard").select("*").eq("org_id", orgId),
+      supabase.from("payments").select("*").eq("org_id", orgId),
+      supabase.from("expenses").select("*").eq("org_id", orgId),
+      supabase.from("bills").select("*").eq("org_id", orgId),
+    ]).then(([inv, pay, exp, bil]) => {
+      setInvoices(inv.data || []); setPayments(pay.data || []);
+      setExpenses(exp.data || []); setBills(bil.data || []);
+      setLoading(false);
+    });
+  }, [orgId]);
+
+  const fInv = filterByFYMonth(invoices, fy, "All");
+  const fPay = filterByFYMonth(payments, fy, "All");
+  const fExp = filterByFYMonth(expenses, fy, "All");
+  const fBil = filterByFYMonth(bills, fy, "All");
+  const fys = getAvailableFYs([...invoices.map(i=>i.date), ...expenses.map(e=>e.date)]);
+
+  const turnover = fInv.reduce((s,i)=>s+i.total,0);
+  const collected = fPay.reduce((s,p)=>s+p.amount,0);
+  const outstanding = fInv.reduce((s,i)=>s+i.balance,0);
+  const gstOutput = fInv.reduce((s,i)=>s+i.tax_total,0);
+  const gstInput = fExp.filter(e=>!isBlocked(e.account_name||"",e.vendor_name||"")).reduce((s,e)=>s+(e.tax_total||0),0);
+  const tdsLiability = fExp.reduce((s,e)=>{ const r=inferTds(e.vendor_name||"",e.account_name||"",e.total); return s+(r?Math.round(e.total*r.rate/100):0); },0);
+  const overdueInv = fInv.filter(i=>i.balance>0&&i.due_date&&new Date(i.due_date)<new Date());
+  const overdueAmt = overdueInv.reduce((s,i)=>s+i.balance,0);
+  const totalExpenses = fExp.reduce((s,e)=>s+e.total,0);
+  const billsOutstanding = fBil.reduce((s,b)=>s+b.balance,0);
+
+  // Aging buckets
+  const aging = { d30:0, d60:0, d90:0, d90p:0 };
+  for (const inv of fInv.filter(i=>i.balance>0&&i.due_date)) {
+    const days = Math.floor((new Date().getTime()-new Date(inv.due_date).getTime())/86400000);
+    if (days<=0) continue;
+    if (days<=30) aging.d30+=inv.balance;
+    else if (days<=60) aging.d60+=inv.balance;
+    else if (days<=90) aging.d90+=inv.balance;
+    else aging.d90p+=inv.balance;
+  }
+
+  const compStatus = [
+    { label: "GSTR-1", status: gstOutput > 0 ? "Due" : "NA", color: "text-amber-600", bg: "bg-amber-50", border: "border-amber-200" },
+    { label: "GSTR-3B", status: gstOutput - gstInput > 0 ? `₹${(gstOutput-gstInput).toLocaleString("en-IN")} payable` : "Nil", color: gstOutput-gstInput>0?"text-red-600":"text-emerald-600", bg: gstOutput-gstInput>0?"bg-red-50":"bg-emerald-50", border: gstOutput-gstInput>0?"border-red-200":"border-emerald-200" },
+    { label: "TDS (26Q)", status: tdsLiability > 0 ? `₹${tdsLiability.toLocaleString("en-IN")} liability` : "Nil", color: tdsLiability>0?"text-violet-600":"text-emerald-600", bg: tdsLiability>0?"bg-violet-50":"bg-emerald-50", border: tdsLiability>0?"border-violet-200":"border-emerald-200" },
+    { label: "Receivables", status: overdueAmt > 0 ? `₹${overdueAmt.toLocaleString("en-IN")} overdue` : "Clear", color: overdueAmt>0?"text-red-600":"text-emerald-600", bg: overdueAmt>0?"bg-red-50":"bg-emerald-50", border: overdueAmt>0?"border-red-200":"border-emerald-200" },
+    { label: "Payables", status: billsOutstanding > 0 ? `₹${billsOutstanding.toLocaleString("en-IN")} due` : "Clear", color: billsOutstanding>0?"text-amber-600":"text-emerald-600", bg: billsOutstanding>0?"bg-amber-50":"bg-emerald-50", border: billsOutstanding>0?"border-amber-200":"border-emerald-200" },
+  ];
+
+  if (loading) return <div className="text-center py-20 text-zinc-400">Preparing report...</div>;
+
+  return (
+    <div className="space-y-6">
+      {/* FY selector */}
+      <div className="flex items-center gap-3">
+        <span className="text-xs font-semibold text-zinc-500">Financial Year:</span>
+        <select value={fy} onChange={e=>setFy(e.target.value)} className="text-sm border border-zinc-200 rounded-lg px-3 py-1.5 focus:outline-none focus:border-black bg-white font-medium">
+          {fys.map(f=><option key={f} value={f}>{f}</option>)}
+        </select>
+        <span className="text-xs text-zinc-400 ml-2">Prepared by {COMPANY_NAME} · {today}</span>
+      </div>
+
+      {/* Header */}
+      <div className="bg-white border border-zinc-200 rounded-2xl p-6 shadow-sm">
+        <div className="flex items-start justify-between mb-6">
+          <div>
+            <p className="text-xs text-zinc-400 uppercase tracking-widest mb-1">Client Report</p>
+            <h2 className="text-2xl font-black text-zinc-900">{clientName}</h2>
+            <p className="text-sm text-zinc-500 mt-0.5">{fy !== "All" ? fy : "All Years"} · As of {today}</p>
+          </div>
+          <img src={COMPANY_LOGO} alt="CA" className="h-12 w-auto" />
+        </div>
+
+        {/* Key metrics */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {[
+            { label: "Total Turnover", value: inr(turnover), color: "text-zinc-900", icon: "📈" },
+            { label: "Collected", value: inr(collected), color: "text-emerald-600", icon: "✅" },
+            { label: "Outstanding", value: inr(outstanding), color: outstanding>0?"text-amber-600":"text-emerald-600", icon: "⏳" },
+            { label: "Total Expenses", value: inr(totalExpenses), color: "text-red-600", icon: "📤" },
+          ].map(m => (
+            <div key={m.label} className="bg-zinc-50 rounded-xl p-4">
+              <p className="text-lg mb-1">{m.icon}</p>
+              <p className="text-xs text-zinc-400 uppercase tracking-wide">{m.label}</p>
+              <p className={`text-xl font-bold mt-0.5 ${m.color}`}>{m.value}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* GST Position */}
+      <div className="bg-white border border-zinc-200 rounded-2xl p-6 shadow-sm">
+        <h3 className="font-bold text-zinc-900 mb-4">GST Position</h3>
+        <div className="grid grid-cols-3 gap-4 mb-4">
+          <div className="bg-red-50 border border-red-100 rounded-xl p-4">
+            <p className="text-xs text-zinc-500 uppercase tracking-wide">Output GST (Sales)</p>
+            <p className="text-2xl font-bold text-red-600 mt-1">{inr(gstOutput)}</p>
+            <p className="text-xs text-zinc-400 mt-1">Collected from customers</p>
+          </div>
+          <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4">
+            <p className="text-xs text-zinc-500 uppercase tracking-wide">Input ITC (Purchases)</p>
+            <p className="text-2xl font-bold text-emerald-600 mt-1">{inr(gstInput)}</p>
+            <p className="text-xs text-zinc-400 mt-1">Eligible credit</p>
+          </div>
+          <div className={`${gstOutput-gstInput>0?"bg-amber-50 border-amber-100":"bg-emerald-50 border-emerald-100"} border rounded-xl p-4`}>
+            <p className="text-xs text-zinc-500 uppercase tracking-wide">Net Payable</p>
+            <p className={`text-2xl font-bold mt-1 ${gstOutput-gstInput>0?"text-amber-600":"text-emerald-600"}`}>{inr(Math.max(0,gstOutput-gstInput))}</p>
+            <p className="text-xs text-zinc-400 mt-1">{gstOutput-gstInput>0?"To be deposited":"Surplus ITC"}</p>
+          </div>
+        </div>
+        {/* Monthly GST table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead><tr className="border-b border-zinc-200 text-zinc-400 uppercase tracking-wide">
+              <th className="text-left py-2 pr-4">Month</th>
+              <th className="text-right py-2 pr-4">Output</th>
+              <th className="text-right py-2 pr-4">Input ITC</th>
+              <th className="text-right py-2">Net Payable</th>
+            </tr></thead>
+            <tbody>
+              {(() => {
+                const months: Record<string,{out:number;inp:number}> = {};
+                for (const inv of fInv) { const m=inv.date?.slice(0,7)||""; if(!months[m]) months[m]={out:0,inp:0}; months[m].out+=inv.tax_total; }
+                for (const exp of fExp) { const m=exp.date?.slice(0,7)||""; if(!months[m]) months[m]={out:0,inp:0}; if(!isBlocked(exp.account_name||"",exp.vendor_name||"")) months[m].inp+=(exp.tax_total||0); }
+                return Object.entries(months).sort((a,b)=>b[0].localeCompare(a[0])).map(([m,d])=>(
+                  <tr key={m} className="border-b border-zinc-50 hover:bg-zinc-50">
+                    <td className="py-2 pr-4 font-medium">{new Date(m+"-01").toLocaleDateString("en-IN",{month:"short",year:"numeric"})}</td>
+                    <td className="py-2 pr-4 text-right text-red-600">{inr(d.out)}</td>
+                    <td className="py-2 pr-4 text-right text-emerald-600">{inr(d.inp)}</td>
+                    <td className={`py-2 text-right font-bold ${d.out-d.inp>0?"text-amber-600":"text-emerald-600"}`}>{inr(d.out-d.inp)}</td>
+                  </tr>
+                ));
+              })()}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Receivables Aging */}
+      <div className="bg-white border border-zinc-200 rounded-2xl p-6 shadow-sm">
+        <h3 className="font-bold text-zinc-900 mb-4">Receivables Aging</h3>
+        <div className="grid grid-cols-4 gap-3 mb-4">
+          {[
+            { label: "1–30 Days", value: aging.d30, color: "text-amber-500" },
+            { label: "31–60 Days", value: aging.d60, color: "text-orange-500" },
+            { label: "61–90 Days", value: aging.d90, color: "text-red-500" },
+            { label: "90+ Days", value: aging.d90p, color: "text-red-700" },
+          ].map(a => (
+            <div key={a.label} className="bg-zinc-50 rounded-xl p-3 text-center">
+              <p className="text-xs text-zinc-400 mb-1">{a.label}</p>
+              <p className={`text-lg font-bold ${a.color}`}>{inr(a.value)}</p>
+            </div>
+          ))}
+        </div>
+        {overdueInv.length > 0 ? (
+          <table className="w-full text-xs">
+            <thead><tr className="border-b border-zinc-200 text-zinc-400 uppercase tracking-wide">
+              <th className="text-left py-2 pr-3">Invoice</th>
+              <th className="text-left py-2 pr-3">Customer</th>
+              <th className="text-left py-2 pr-3">Due Date</th>
+              <th className="text-right py-2 pr-3">Days</th>
+              <th className="text-right py-2">Outstanding</th>
+            </tr></thead>
+            <tbody>
+              {overdueInv.sort((a,b)=>new Date(a.due_date).getTime()-new Date(b.due_date).getTime()).map(inv=>{
+                const days=Math.floor((new Date().getTime()-new Date(inv.due_date).getTime())/86400000);
+                const color=days>90?"text-red-700":days>60?"text-red-500":days>30?"text-orange-500":"text-amber-500";
+                return (
+                  <tr key={inv.id} className="border-b border-zinc-50 hover:bg-zinc-50">
+                    <td className="py-2 pr-3 font-mono">{inv.invoice_number}</td>
+                    <td className="py-2 pr-3">{inv.customer_name}</td>
+                    <td className="py-2 pr-3">{fdate(inv.due_date)}</td>
+                    <td className={`py-2 pr-3 text-right font-bold ${color}`}>{days}d</td>
+                    <td className="py-2 text-right font-bold text-red-600">{inr(inv.balance)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        ) : <p className="text-center py-4 text-emerald-600 font-medium">✓ No overdue receivables</p>}
+      </div>
+
+      {/* TDS Tracker */}
+      <div className="bg-white border border-zinc-200 rounded-2xl p-6 shadow-sm">
+        <h3 className="font-bold text-zinc-900 mb-4">TDS Tracker</h3>
+        {tdsLiability > 0 ? (
+          <>
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div className="bg-violet-50 border border-violet-100 rounded-xl p-4">
+                <p className="text-xs text-zinc-500 uppercase">Total TDS Liability</p>
+                <p className="text-2xl font-bold text-violet-600 mt-1">{inr(tdsLiability)}</p>
+              </div>
+              <div className="bg-zinc-50 border border-zinc-100 rounded-xl p-4">
+                <p className="text-xs text-zinc-500 uppercase">Transactions Liable</p>
+                <p className="text-2xl font-bold mt-1">{fExp.filter(e=>inferTds(e.vendor_name||"",e.account_name||"",e.total)).length}</p>
+              </div>
+            </div>
+            <table className="w-full text-xs">
+              <thead><tr className="border-b border-zinc-200 text-zinc-400 uppercase tracking-wide">
+                <th className="text-left py-2 pr-3">Vendor</th>
+                <th className="text-left py-2 pr-3">Account</th>
+                <th className="text-left py-2 pr-3">Date</th>
+                <th className="text-left py-2 pr-3">Section</th>
+                <th className="text-right py-2 pr-3">Amount</th>
+                <th className="text-right py-2">TDS Due</th>
+              </tr></thead>
+              <tbody>
+                {fExp.map(e=>{ const r=inferTds(e.vendor_name||"",e.account_name||"",e.total); if(!r) return null;
+                  return <tr key={e.id} className="border-b border-zinc-50 hover:bg-zinc-50">
+                    <td className="py-2 pr-3">{e.vendor_name||"—"}</td>
+                    <td className="py-2 pr-3 text-zinc-400">{e.account_name||"—"}</td>
+                    <td className="py-2 pr-3">{fdate(e.date)}</td>
+                    <td className="py-2 pr-3"><span className="bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded font-mono font-bold">{r.sec}</span></td>
+                    <td className="py-2 pr-3 text-right">{inr(e.total)}</td>
+                    <td className="py-2 text-right font-bold text-violet-600">{inr(Math.round(e.total*r.rate/100))}</td>
+                  </tr>;
+                })}
+              </tbody>
+            </table>
+          </>
+        ) : <p className="text-center py-4 text-emerald-600 font-medium">✓ No TDS liability found</p>}
+      </div>
+
+      {/* Compliance Status */}
+      <div className="bg-white border border-zinc-200 rounded-2xl p-6 shadow-sm">
+        <h3 className="font-bold text-zinc-900 mb-4">Compliance Status</h3>
+        <div className="grid grid-cols-1 gap-3">
+          {compStatus.map(c=>(
+            <div key={c.label} className={`flex items-center justify-between p-4 rounded-xl border ${c.bg} ${c.border}`}>
+              <span className="font-semibold text-zinc-700">{c.label}</span>
+              <span className={`text-sm font-bold ${c.color}`}>{c.status}</span>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 p-4 bg-zinc-50 rounded-xl text-xs text-zinc-500">
+          <p className="font-semibold text-zinc-700 mb-2">Important Deadlines</p>
+          <div className="grid grid-cols-2 gap-2">
+            {[["GSTR-1","11th of next month"],["GSTR-3B","20th of next month"],["TDS Deposit","7th of next month"],["Form 26Q","15th after quarter end"],["Advance Tax","15 Jun / 15 Sep / 15 Dec / 15 Mar"],["IT Return","31st October"]].map(([f,d])=>(
+              <div key={f} className="flex items-center justify-between border-b border-zinc-100 pb-1">
+                <span className="font-medium text-zinc-600">{f}</span>
+                <span className="text-zinc-400">{d}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Compliance Module ────────────────────────────────────────────────────────
 function ComplianceModule({ orgId, clientName, initSection = "" }: { orgId: string; clientName: string; initSection?: string }) {
   const [section, setSection] = useState<CompSection>(() => {
     const valid = ["summary","gst_filing","tds_filing","pt_pf","it_filing"];
-    return (initSection && valid.includes(initSection) ? initSection : "summary") as CompSection;
+    return (initSection && valid.includes(initSection) ? initSection : "client_report") as CompSection;
   });
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -1514,7 +1775,8 @@ function ComplianceModule({ orgId, clientName, initSection = "" }: { orgId: stri
   }, [orgId]);
 
   const COMP_SECTIONS: { key: CompSection; label: string }[] = [
-    { key: "summary", label: "Client Summary" },
+    { key: "client_report", label: "📊 Client Report" },
+    { key: "summary", label: "Summary" },
     { key: "gst_filing", label: "GST Filing" },
     { key: "tds_filing", label: "TDS Filing" },
     { key: "pt_pf", label: "PT / PF" },
@@ -1549,6 +1811,8 @@ function ComplianceModule({ orgId, clientName, initSection = "" }: { orgId: stri
       <FYMonthFilter
         dates={[...invoices, ...expenses].map(i => (i as any).date || "")}
         fy={fy} month={month} onFY={v => { setFy(v); setMonth("All"); }} onMonth={setMonth} />
+
+      {section === "client_report" && <ClientSummaryReport orgId={orgId} clientName={clientName} />}
 
       {section === "summary" && (
         <div className="space-y-6">

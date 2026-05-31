@@ -1090,7 +1090,7 @@ function EditableTDSTable({ items, orgId }: { items: { exp: Expense; rule: typeo
 // ─── Ledger TDS Tracker ───────────────────────────────────────────────────────
 type TDSLedgerRow = {
   key: string; vendor: string; account: string; source: string;
-  totalAmount: number; transactions: number;
+  totalAmount: number; transactions: { vendor: string; date: string; amount: number; ref: string; source: string }[];
   eligible: boolean; sec: string; rate: number; tdsAmount: number; pan: string; note: string;
 };
 
@@ -1100,29 +1100,33 @@ function LedgerTDSTracker({ expenses, bills, vendorPayments, journals, orgId }: 
   const [rows, setRows] = React.useState<TDSLedgerRow[]>([]);
   const [saved, setSaved] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
+  const [expanded, setExpanded] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    const map: Record<string, { vendor: string; account: string; total: number; txns: number; source: string }> = {};
-    const add = (vendor: string, account: string, amount: number, source: string) => {
-      const key = (vendor + "|" + account).toLowerCase().trim();
-      if (!key || key === "|") return;
-      if (!map[key]) map[key] = { vendor: vendor || "—", account: account || "—", total: 0, txns: 0, source };
-      map[key].total += amount; map[key].txns++;
-    };
-    const bankKw = ["current account","savings account","cash","hdfc","icici","sbi","axis","kotak","indusind","yes bank"];
+    const map: Record<string, TDSLedgerRow> = {};
+    const bankKw = ["current account","savings account","cash in hand","petty cash","hdfc","icici","sbi","axis","kotak","indusind","yes bank","federal bank","rbl"];
     const isBank = (s: string) => bankKw.some(b => s.toLowerCase().includes(b));
 
-    for (const e of expenses) add(e.vendor_name || "", e.account_name || "", e.total, "Expense");
-    for (const b of bills) add(b.vendor_name || "", b.vendor_name || "Bill", b.total, "Bill");
-    for (const vp of vendorPayments) add(vp.vendor_name || "", "Vendor Payment", vp.amount, "VendorPmt");
+    const addTxn = (accountName: string, vendor: string, amount: number, date: string, ref: string, source: string) => {
+      if (!accountName || isBank(accountName)) return;
+      const key = accountName.toLowerCase().trim();
+      if (!map[key]) map[key] = { key, vendor: accountName, account: accountName, source, totalAmount: 0, transactions: [], eligible: false, sec: "194J", rate: 10, tdsAmount: 0, pan: "", note: "" };
+      map[key].totalAmount += amount;
+      map[key].transactions.push({ vendor: vendor || "—", date, amount, ref, source });
+      if (source !== "Journal") map[key].source = source;
+    };
+
+    for (const e of expenses) addTxn(e.account_name||"", e.vendor_name||"", e.total, e.date, e.expense_number||e.id.slice(-8), "Expense");
+    for (const b of bills) addTxn(b.vendor_name||"", b.vendor_name||"", b.total, b.date, b.bill_number||b.id.slice(-8), "Bill");
+    for (const vp of vendorPayments) addTxn(vp.vendor_name||"", vp.vendor_name||"", vp.amount, vp.date, vp.payment_number||vp.id.slice(-8), "VendorPmt");
     for (const j of journals) {
       try {
         const lines = JSON.parse(j.line_items || "[]");
         for (const l of lines) {
           const amt = Number(l.amount || l.debit || 0);
           const acct = l.account_name || "";
-          if ((l.debit_or_credit === "debit" || Number(l.debit || 0) > 0) && amt > 0 && !isBank(acct))
-            add(l.contact_name || l.customer_name || j.notes || "", acct, amt, "Journal");
+          if ((l.debit_or_credit === "debit" || Number(l.debit||0) > 0) && amt > 0 && !isBank(acct))
+            addTxn(acct, l.contact_name || l.customer_name || j.notes || "", amt, j.journal_date, j.entry_number||j.id.slice(-8), "Journal");
         }
       } catch {}
     }
@@ -1130,32 +1134,31 @@ function LedgerTDSTracker({ expenses, bills, vendorPayments, journals, orgId }: 
     supabase.from("pending_changes").select("*").eq("org_id", orgId).eq("module", "tds_ledger").then(({ data: sv }) => {
       const savedMap: Record<string, any> = {};
       for (const s of (sv || [])) savedMap[s.record_id || ""] = s.payload;
-      const TDS_SECTIONS = ["192","193","194","194A","194B","194BB","194C","194D","194G","194H","194I","194IB","194IC","194J","194K","194LA","194M","194N","194O","194Q","195","206AA"];
+
       const result: TDSLedgerRow[] = Object.entries(map)
-        .sort((a, b) => b[1].total - a[1].total)
+        .sort((a, b) => b[1].totalAmount - a[1].totalAmount)
         .map(([key, entry]) => {
           const sv2 = savedMap[key] || {};
-          const inf = inferTds(entry.vendor, entry.account, entry.total / entry.txns);
+          const inf = inferTds("", entry.account, entry.totalAmount / Math.max(entry.transactions.length, 1));
           return {
-            key, vendor: entry.vendor, account: entry.account, source: entry.source,
-            totalAmount: entry.total, transactions: entry.txns,
+            ...entry, key,
             eligible: sv2.eligible !== undefined ? sv2.eligible : inf !== null,
             sec: sv2.sec || inf?.sec || "194J",
             rate: sv2.rate !== undefined ? sv2.rate : (inf?.rate || 10),
-            tdsAmount: sv2.tdsAmount !== undefined ? sv2.tdsAmount : (inf ? Math.round(entry.total * (inf.rate / 100)) : 0),
+            tdsAmount: sv2.tdsAmount !== undefined ? sv2.tdsAmount : (inf ? Math.round(entry.totalAmount * (inf.rate / 100)) : 0),
             pan: sv2.pan || "", note: sv2.note || "",
           };
         });
       setRows(result); setLoading(false);
     });
-  }, [orgId, expenses.length, bills.length, vendorPayments.length]);
+  }, [orgId, expenses.length, bills.length, vendorPayments.length, journals.length]);
 
   const save = async (key: string, updates: Partial<TDSLedgerRow>) => {
     setRows(prev => prev.map(r => {
       if (r.key !== key) return r;
-      const updated = { ...r, ...updates };
-      if (updates.rate !== undefined) updated.tdsAmount = Math.round(r.totalAmount * (updates.rate / 100));
-      return updated;
+      const u = { ...r, ...updates };
+      if (updates.rate !== undefined) u.tdsAmount = Math.round(r.totalAmount * (updates.rate / 100));
+      return u;
     }));
     const row = rows.find(r => r.key === key);
     if (!row) return;
@@ -1180,66 +1183,122 @@ function LedgerTDSTracker({ expenses, bills, vendorPayments, journals, orgId }: 
         <Card label="Missing PAN" value={String(missingPAN)} color={missingPAN > 0 ? "text-red-600" : "text-emerald-600"} />
       </div>
       <div className="bg-violet-50 border border-violet-200 rounded-xl p-3 flex items-center justify-between">
-        <p className="text-xs text-violet-700">Toggle YES/NO for TDS eligibility. Edit section, rate, TDS amount and PAN. All changes auto-saved.</p>
-        {saved && <span className="text-xs text-emerald-600 font-bold animate-pulse">✓ Saved</span>}
+        <p className="text-xs text-violet-700">Click any ledger row to expand individual transactions. Toggle YES/NO to mark TDS eligibility. PAN is saved permanently.</p>
+        {saved && <span className="text-xs text-emerald-600 font-bold">✓ Saved</span>}
       </div>
+
       <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead><tr className="border-b border-zinc-200 bg-zinc-50">
-              {["Vendor / Ledger","Account","Source","Txns","Total Paid","TDS?","Section","Rate %","TDS ₹","PAN","Note"].map((h,i) => (
-                <th key={i} className={`px-3 py-2.5 text-zinc-500 uppercase tracking-wide font-semibold ${i >= 4 ? "text-right" : "text-left"} whitespace-nowrap`}>{h}</th>
-              ))}
-            </tr></thead>
-            <tbody>
-              {rows.map(row => (
-                <tr key={row.key} className={`border-b border-zinc-100 last:border-0 ${row.eligible ? "hover:bg-zinc-50" : "opacity-40 bg-zinc-50"}`}>
-                  <td className="px-3 py-2 font-medium text-zinc-800 max-w-[140px]"><span title={row.vendor} className="block truncate">{row.vendor}</span></td>
-                  <td className="px-3 py-2 text-zinc-500 max-w-[140px]"><span title={row.account} className="block truncate">{row.account}</span></td>
-                  <td className="px-3 py-2"><span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${row.source==="Bill"?"bg-blue-100 text-blue-700":row.source==="Expense"?"bg-emerald-100 text-emerald-700":row.source==="Journal"?"bg-purple-100 text-purple-700":"bg-zinc-100 text-zinc-500"}`}>{row.source}</span></td>
-                  <td className="px-3 py-2 text-right text-zinc-500">{row.transactions}</td>
-                  <td className="px-3 py-2 text-right font-semibold text-zinc-800">{inr(row.totalAmount)}</td>
-                  <td className="px-3 py-2 text-center">
-                    <button onClick={() => save(row.key, { eligible: !row.eligible })}
-                      className={`text-xs px-2 py-0.5 rounded-full font-bold border transition ${row.eligible ? "bg-violet-600 text-white border-violet-600" : "bg-white text-zinc-400 border-zinc-300 hover:border-violet-400"}`}>
-                      {row.eligible ? "YES" : "NO"}
-                    </button>
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    {row.eligible ? <select value={row.sec} onChange={e => save(row.key, { sec: e.target.value })}
-                      className="text-xs border border-zinc-200 rounded px-1 py-0.5 font-mono font-bold text-violet-700 bg-white focus:outline-none focus:border-violet-500">
-                      {TDS_SECTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select> : <span className="text-zinc-300">—</span>}
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    {row.eligible ? <input type="number" value={row.rate} onChange={e => save(row.key, { rate: Number(e.target.value) })}
-                      className="w-12 text-xs border border-zinc-200 rounded px-1 py-0.5 text-right focus:outline-none focus:border-violet-500" /> : <span className="text-zinc-300">—</span>}
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    {row.eligible ? <input type="number" value={row.tdsAmount} onChange={e => save(row.key, { tdsAmount: Number(e.target.value) })}
-                      className="w-20 text-xs border border-zinc-200 rounded px-1 py-0.5 text-right font-bold text-violet-700 focus:outline-none focus:border-violet-500" /> : <span className="text-zinc-300">—</span>}
-                  </td>
-                  <td className="px-3 py-2">
-                    <input value={row.pan} onChange={e => save(row.key, { pan: e.target.value.toUpperCase() })}
-                      placeholder="AAAAA0000A" maxLength={10}
-                      className={`w-24 text-xs border rounded px-1.5 py-0.5 font-mono uppercase focus:outline-none focus:border-black ${row.eligible && !row.pan ? "border-red-300 bg-red-50" : "border-zinc-200"}`} />
-                  </td>
-                  <td className="px-3 py-2">
-                    <input value={row.note} onChange={e => save(row.key, { note: e.target.value })}
-                      placeholder="Note..." className="w-24 text-xs border border-zinc-200 rounded px-1.5 py-0.5 focus:outline-none focus:border-black" />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-            {eligible.length > 0 && <tfoot>
-              <tr className="border-t-2 border-zinc-300 bg-zinc-50 font-bold">
-                <td colSpan={8} className="px-3 py-2.5 text-sm text-zinc-700">Total TDS Liability</td>
-                <td className="px-3 py-2.5 text-right text-violet-700 text-sm">{inr(totalTDS)}</td>
-                <td colSpan={2} className="px-3 py-2.5 text-xs text-red-500">{missingPAN > 0 ? `⚠ ${missingPAN} PAN missing` : "✓ All PAN captured"}</td>
-              </tr>
-            </tfoot>}
-          </table>
+        <div className="grid grid-cols-12 gap-2 px-4 py-2.5 bg-zinc-50 border-b border-zinc-200 text-xs font-semibold text-zinc-500 uppercase tracking-wide">
+          <div className="col-span-3">Ledger / Account</div>
+          <div className="col-span-1 text-right">Txns</div>
+          <div className="col-span-1 text-right">Total Paid</div>
+          <div className="col-span-1 text-center">TDS?</div>
+          <div className="col-span-1 text-center">Section</div>
+          <div className="col-span-1 text-right">Rate%</div>
+          <div className="col-span-1 text-right">TDS ₹</div>
+          <div className="col-span-2">PAN</div>
+          <div className="col-span-1">Note</div>
         </div>
+
+        {rows.map(row => (
+          <div key={row.key} className={`border-b border-zinc-100 last:border-0 ${row.eligible ? "" : "opacity-60"}`}>
+            <div
+              className={`grid grid-cols-12 gap-2 px-4 py-3 items-center cursor-pointer transition-colors ${expanded === row.key ? "bg-violet-50" : "hover:bg-zinc-50"}`}
+              onClick={() => setExpanded(expanded === row.key ? null : row.key)}>
+              <div className="col-span-3 flex items-center gap-2 min-w-0">
+                <span className="text-zinc-400 text-xs flex-shrink-0">{expanded === row.key ? "▲" : "▼"}</span>
+                <div className="min-w-0">
+                  <p className="font-semibold text-zinc-900 text-sm" title={row.account}>{row.account}</p>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${row.source==="Bill"?"bg-blue-100 text-blue-700":row.source==="Expense"?"bg-emerald-100 text-emerald-700":row.source==="Journal"?"bg-purple-100 text-purple-700":"bg-zinc-100 text-zinc-500"}`}>{row.source}</span>
+                </div>
+              </div>
+              <div className="col-span-1 text-right text-zinc-500 text-sm">{row.transactions.length}</div>
+              <div className="col-span-1 text-right font-semibold text-zinc-800 text-sm">{inr(row.totalAmount)}</div>
+              <div className="col-span-1 text-center" onClick={e => e.stopPropagation()}>
+                <button onClick={() => save(row.key, { eligible: !row.eligible })}
+                  className={`text-xs px-2 py-0.5 rounded-full font-bold border transition ${row.eligible ? "bg-violet-600 text-white border-violet-600" : "bg-white text-zinc-400 border-zinc-300 hover:border-violet-400"}`}>
+                  {row.eligible ? "YES" : "NO"}
+                </button>
+              </div>
+              <div className="col-span-1 text-center" onClick={e => e.stopPropagation()}>
+                {row.eligible ? (
+                  <select value={row.sec} onChange={e => save(row.key, { sec: e.target.value })}
+                    className="text-xs border border-zinc-200 rounded px-1 py-0.5 font-mono font-bold text-violet-700 bg-white focus:outline-none w-full">
+                    {TDS_SECTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                ) : <span className="text-zinc-300 text-xs">—</span>}
+              </div>
+              <div className="col-span-1 text-right" onClick={e => e.stopPropagation()}>
+                {row.eligible ? (
+                  <input type="number" value={row.rate} onChange={e => save(row.key, { rate: Number(e.target.value) })}
+                    className="w-12 text-xs border border-zinc-200 rounded px-1 py-0.5 text-right focus:outline-none focus:border-violet-500" />
+                ) : <span className="text-zinc-300 text-xs">—</span>}
+              </div>
+              <div className="col-span-1 text-right" onClick={e => e.stopPropagation()}>
+                {row.eligible ? (
+                  <input type="number" value={row.tdsAmount} onChange={e => save(row.key, { tdsAmount: Number(e.target.value) })}
+                    className="w-20 text-xs border border-zinc-200 rounded px-1 py-0.5 text-right font-bold text-violet-700 focus:outline-none focus:border-violet-500" />
+                ) : <span className="text-zinc-300 text-xs">—</span>}
+              </div>
+              <div className="col-span-2" onClick={e => e.stopPropagation()}>
+                <input value={row.pan} onChange={e => save(row.key, { pan: e.target.value.toUpperCase() })}
+                  placeholder="AAAAA0000A" maxLength={10}
+                  className={`w-full text-xs border rounded px-2 py-0.5 font-mono uppercase focus:outline-none ${row.eligible && !row.pan ? "border-red-300 bg-red-50 placeholder-red-300" : "border-zinc-200"}`} />
+              </div>
+              <div className="col-span-1" onClick={e => e.stopPropagation()}>
+                <input value={row.note} onChange={e => save(row.key, { note: e.target.value })}
+                  placeholder="Note" className="w-full text-xs border border-zinc-200 rounded px-1.5 py-0.5 focus:outline-none" />
+              </div>
+            </div>
+
+            {expanded === row.key && (
+              <div className="border-t border-violet-100 bg-violet-50/40 px-8 py-4">
+                <p className="text-xs font-semibold text-violet-700 uppercase tracking-wide mb-3">
+                  {row.transactions.length} Transactions · {row.account}
+                  {row.eligible && <span className="ml-3 text-zinc-500 font-normal normal-case">Section {row.sec} @{row.rate}% → TDS {inr(row.tdsAmount)}</span>}
+                </p>
+                <table className="w-full text-xs">
+                  <thead><tr className="border-b border-violet-200 text-violet-500 uppercase tracking-wide">
+                    <th className="text-left pb-1.5 pr-4">Date</th>
+                    <th className="text-left pb-1.5 pr-4">Vendor / Party</th>
+                    <th className="text-left pb-1.5 pr-4">Reference</th>
+                    <th className="text-center pb-1.5 pr-4">Source</th>
+                    <th className="text-right pb-1.5 pr-4">Amount</th>
+                    <th className="text-right pb-1.5">TDS Due</th>
+                  </tr></thead>
+                  <tbody>
+                    {row.transactions.sort((a,b) => (b.date||"").localeCompare(a.date||"")).map((t, i) => (
+                      <tr key={i} className="border-b border-violet-100 last:border-0 hover:bg-violet-50">
+                        <td className="py-1.5 pr-4 text-zinc-600 whitespace-nowrap">{fdate(t.date)}</td>
+                        <td className="py-1.5 pr-4 text-zinc-700 font-medium">{t.vendor}</td>
+                        <td className="py-1.5 pr-4 font-mono text-zinc-400">{t.ref}</td>
+                        <td className="py-1.5 pr-4 text-center">
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded ${t.source==="Bill"?"bg-blue-100 text-blue-700":t.source==="Expense"?"bg-emerald-100 text-emerald-700":t.source==="Journal"?"bg-purple-100 text-purple-700":"bg-zinc-100 text-zinc-500"}`}>{t.source}</span>
+                        </td>
+                        <td className="py-1.5 pr-4 text-right font-medium text-zinc-800">{inr(t.amount)}</td>
+                        <td className="py-1.5 text-right font-bold text-violet-600">{row.eligible ? inr(Math.round(t.amount * row.rate / 100)) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot><tr className="border-t-2 border-violet-200 font-bold">
+                    <td colSpan={4} className="py-2 text-violet-700">Total</td>
+                    <td className="py-2 text-right text-violet-700">{inr(row.totalAmount)}</td>
+                    <td className="py-2 text-right text-violet-600">{row.eligible ? inr(row.tdsAmount) : "—"}</td>
+                  </tr></tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+        ))}
+
+        {eligible.length > 0 && (
+          <div className="grid grid-cols-12 gap-2 px-4 py-3 bg-zinc-50 border-t-2 border-zinc-300 font-bold text-sm">
+            <div className="col-span-3 text-zinc-700">Total TDS Liability</div>
+            <div className="col-span-5"></div>
+            <div className="col-span-1 text-right text-violet-700">{inr(totalTDS)}</div>
+            <div className="col-span-3 text-xs text-red-500 flex items-center">{missingPAN > 0 ? `⚠ ${missingPAN} PAN missing` : "✓ All PAN captured"}</div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -616,6 +616,10 @@ function AccountingModule({ orgId, initSection = "" }: { orgId: string; initSect
   const [modal, setModal] = useState<{ type: string; record?: any } | null>(null);
   const [showPending, setShowPending] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
+  const [invFilter, setInvFilter] = useState<string | null>(null);
+  const [payFilter, setPayFilter] = useState<string | null>(null);
+  const [expFilter, setExpFilter] = useState<string | null>(null);
+  const [billFilter, setBillFilter] = useState<string | null>(null);
 
   useEffect(() => {
     supabase.from("pending_changes").select("id", { count: "exact" }).eq("org_id", orgId).eq("status", "pending")
@@ -714,19 +718,18 @@ function AccountingModule({ orgId, initSection = "" }: { orgId: string; initSect
 
       {/* INVOICES */}
       {section === "invoices" && (() => {
-        const [cardFilter, setCardFilter] = useState<string | null>(null);
         const base = filterByFYMonth(invoices, fy, month).filter(i => i.invoice_number?.toLowerCase().includes(search.toLowerCase()) || i.customer_name?.toLowerCase().includes(search.toLowerCase()));
-        const d = cardFilter === "outstanding" ? base.filter(i => i.balance > 0) : cardFilter === "paid" ? base.filter(i => i.status === "paid") : cardFilter === "overdue" ? base.filter(i => i.balance > 0 && i.due_date && new Date(i.due_date) < new Date()) : base;
+        const d = invFilter === "outstanding" ? base.filter(i => i.balance > 0) : invFilter === "paid" ? base.filter(i => i.status === "paid") : base;
         const total = base.reduce((s, i) => s + i.total, 0); const balance = base.reduce((s, i) => s + i.balance, 0); const gst = base.reduce((s, i) => s + i.tax_total, 0);
         const cur = base[0]?.currency_code || "INR";
-        const toggle = (f: string) => setCardFilter(prev => prev === f ? null : f);
+        const toggle = (f: string) => setInvFilter(prev => prev === f ? null : f);
         return (
           <div className="space-y-4">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <Card label="Total Invoiced" value={fmt(total, cur)} onClick={() => toggle("all")} active={cardFilter === "all"} />
-              <Card label="Outstanding" value={fmt(balance, cur)} color="text-amber-600" onClick={() => toggle("outstanding")} active={cardFilter === "outstanding"} />
-              <Card label="GST Collected" value={fmt(gst, cur)} color="text-blue-600" onClick={() => toggle("gst")} active={cardFilter === "gst"} />
-              <Card label={`Paid (${base.filter(i => i.status === "paid").length})`} value={`${base.filter(i => i.status === "paid").length} / ${base.length}`} color="text-emerald-600" onClick={() => toggle("paid")} active={cardFilter === "paid"} />
+              <Card label="Total Invoiced" value={fmt(total, cur)} onClick={() => toggle("all")} active={invFilter === "all"} />
+              <Card label="Outstanding" value={fmt(balance, cur)} color="text-amber-600" onClick={() => toggle("outstanding")} active={invFilter === "outstanding"} />
+              <Card label="GST Collected" value={fmt(gst, cur)} color="text-blue-600" onClick={() => toggle("gst")} active={invFilter === "gst"} />
+              <Card label={`Paid (${base.filter(i => i.status === "paid").length})`} value={`${base.filter(i => i.status === "paid").length} / ${base.length}`} color="text-emerald-600" onClick={() => toggle("paid")} active={invFilter === "paid"} />
             </div>
             <Table cols={["Invoice #", "Customer", "Date", "Due", "Status", "Subtotal", "GST", "Total", "Balance"]}
               rows={d.map(i => [
@@ -785,16 +788,15 @@ function AccountingModule({ orgId, initSection = "" }: { orgId: string; initSect
 
       {/* PAYMENTS / RECEIPTS */}
       {section === "payments" && (() => {
-        const [cardFilter, setCardFilter] = useState<string | null>(null);
         const allPay = filterByFYMonth(payments, fy, month).filter(p => p.payment_number?.toLowerCase().includes(search.toLowerCase()) || p.customer_name?.toLowerCase().includes(search.toLowerCase()));
-        const d = cardFilter === "forex" ? allPay.filter(p => p.currency_code && p.currency_code !== "INR") : allPay;
-        const toggle = (f: string) => setCardFilter(prev => prev === f ? null : f);
+        const d = payFilter === "forex" ? allPay.filter(p => p.currency_code && p.currency_code !== "INR") : allPay;
+        const toggle = (f: string) => setPayFilter(prev => prev === f ? null : f);
         return (
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-3">
               <Card label="Total Receipts" value={String(allPay.length)} />
               <Card label="Total Received" value={fmt(allPay.reduce((s, i) => s + i.amount, 0), allPay[0]?.currency_code)} color="text-emerald-600" />
-              <Card label="Foreign Currency" value={String(allPay.filter(p => p.currency_code && p.currency_code !== "INR").length)} color="text-blue-600" onClick={() => toggle("forex")} active={cardFilter === "forex"} sub="Click to filter forex" />
+              <Card label="Foreign Currency" value={String(allPay.filter(p => p.currency_code && p.currency_code !== "INR").length)} color="text-blue-600" onClick={() => toggle("forex")} active={payFilter === "forex"} sub="Click to filter forex" />
             </div>
             <Table cols={["Receipt #", "Customer", "Date", "Mode", "Foreign Amt", "Forex Rate", "INR Amount"]}
               rows={d.map(p => {
@@ -863,16 +865,15 @@ function AccountingModule({ orgId, initSection = "" }: { orgId: string; initSect
 
       {/* BILLS */}
       {section === "bills" && (() => {
-        const [cardFilter, setCardFilter] = useState<string | null>(null);
         const base = filterByFYMonth(bills, fy, month).filter(b => b.bill_number?.toLowerCase().includes(search.toLowerCase()) || b.vendor_name?.toLowerCase().includes(search.toLowerCase()));
-        const d = cardFilter === "outstanding" ? base.filter(b => b.balance > 0) : cardFilter === "paid" ? base.filter(b => b.status === "paid") : base;
-        const toggle = (f: string) => setCardFilter(prev => prev === f ? null : f);
+        const d = billFilter === "outstanding" ? base.filter(b => b.balance > 0) : billFilter === "paid" ? base.filter(b => b.status === "paid") : base;
+        const toggle = (f: string) => setBillFilter(prev => prev === f ? null : f);
         return (
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-3">
-              <Card label="Total Bills" value={String(base.length)} onClick={() => toggle("all")} active={cardFilter === "all"} />
-              <Card label="Outstanding" value={fmt(base.reduce((s, i) => s + i.balance, 0), base[0]?.currency_code)} color="text-amber-600" onClick={() => toggle("outstanding")} active={cardFilter === "outstanding"} />
-              <Card label="Paid" value={String(base.filter(b => b.status === "paid").length)} color="text-emerald-600" onClick={() => toggle("paid")} active={cardFilter === "paid"} />
+              <Card label="Total Bills" value={String(base.length)} onClick={() => toggle("all")} active={invFilter === "all"} />
+              <Card label="Outstanding" value={fmt(base.reduce((s, i) => s + i.balance, 0), base[0]?.currency_code)} color="text-amber-600" onClick={() => toggle("outstanding")} active={invFilter === "outstanding"} />
+              <Card label="Paid" value={String(base.filter(b => b.status === "paid").length)} color="text-emerald-600" onClick={() => toggle("paid")} active={invFilter === "paid"} />
             </div>
             <Table cols={["Bill #", "Vendor", "Date", "Due", "Status", "Total", "Balance", ""]}
               rows={d.map(b => [

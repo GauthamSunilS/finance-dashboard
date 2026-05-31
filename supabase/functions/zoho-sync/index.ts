@@ -41,7 +41,9 @@ async function fetchAll(token: string, orgId: string, endpoint: string, listKey:
       console.error(`${endpoint} API error: code=${data.code} message=${data.message}`);
       break;
     }
-    const items: any[] = data[listKey] || [];
+    // Try listKey, then singular, then first array in response
+    const items: any[] = data[listKey] || data[listKey.slice(0,-1)] || [];
+    if (page === 1) console.log(`${endpoint}: found ${items.length} items, keys: ${Object.keys(data).join(",")}`);
     results.push(...items);
     if (items.length < 200 || !data.page_context?.has_more_page) break;
     page++;
@@ -178,11 +180,12 @@ function mapCustomerPayment(p: any, orgId: string) {
     payment_mode: p.payment_mode || null,
     amount: Number(p.amount || 0),
     bank_charges: Number(p.bank_charges || 0),
-    tax_amount_withheld: Number(p.tax_amount_withheld || 0),  // TDS withheld
+    tax_amount_withheld: Number(p.tax_amount_withheld || 0),
     currency_code: p.currency_code || "INR",
+    exchange_rate: Number(p.exchange_rate || 1),
     date: p.date,
     reference_number: p.reference_number || null,
-    invoices: p.invoices ? JSON.stringify(p.invoices) : null, // which invoices settled
+    invoices: p.invoices ? JSON.stringify(p.invoices) : null,
     created_time: p.created_time, last_modified_time: p.last_modified_time,
   };
 }
@@ -205,20 +208,24 @@ function mapCreditNote(c: any, orgId: string) {
 }
 
 function mapExpense(e: any, orgId: string) {
+  // Zoho stores tax as tax_amount (inclusive) in detail view
+  const taxTotal = Number(e.tax_total || e.tax_amount || 0);
+  const total = Number(e.total || 0);
+  const subTotal = Number(e.sub_total || 0) || (total - taxTotal);
   return {
     id: e.expense_id, org_id: orgId,
     expense_number: e.expense_id,
     account_id: e.account_id || null,
     account_name: e.account_name || null,
     vendor_id: e.vendor_id || null,
-    vendor_name: e.vendor_name || null,
+    vendor_name: e.vendor_name || e.vendor?.vendor_name || null,
     paid_through_account_name: e.paid_through_account_name || null,
     status: e.status,
     date: e.date,
     due_date: e.due_date || null,
-    total: Number(e.total || 0),
-    sub_total: Number(e.sub_total || 0),
-    tax_total: Number(e.tax_total || 0),
+    total: total,
+    sub_total: subTotal,
+    tax_total: taxTotal,
     is_billable: e.is_billable || false,
     customer_id: e.customer_id || null,
     customer_name: e.customer_name || null,
@@ -226,7 +233,8 @@ function mapExpense(e: any, orgId: string) {
     reference_number: e.reference_number || null,
     description: e.description || null,
     report_name: e.report_name || null,
-    created_time: e.created_time, last_modified_time: e.last_modified_time,
+    created_time: e.created_time || null,
+    last_modified_time: e.last_modified_time || null,
   };
 }
 
@@ -307,14 +315,15 @@ function mapJournal(j: any, orgId: string) {
   return {
     id: j.journal_id, org_id: orgId,
     journal_date: j.journal_date || j.date || null,
-    entry_number: j.entry_number || j.journal_number || null,
+    entry_number: j.entry_number || j.journal_number || String(j.journal_id || ""),
     reference_number: j.reference_number || null,
     notes: j.notes || j.description || null,
-    total: Number(j.total || j.debit_or_credit_total || 0),
+    total: Number(j.total || j.debit_or_credit_total || j.debit_total || 0),
     currency_code: j.currency_code || j.currency_id || "INR",
     status: j.status || null,
     line_items: j.line_items ? JSON.stringify(j.line_items) : null,
-    created_time: j.created_time, last_modified_time: j.last_modified_time,
+    created_time: j.created_time || null,
+    last_modified_time: j.last_modified_time || null,
   };
 }
 
@@ -458,7 +467,9 @@ serve(async (req) => {
       await upsert(SUPABASE_URL, KEY, "purchase_orders", purchaseOrders);
       summary["purchase_orders"] = (summary["purchase_orders"] || 0) + purchaseOrders.length;
 
-      const bills = (await fetchAll(token, orgId, "bills", "bills")).map(b => mapBill(b, orgId));
+      // Fetch bills - Zoho returns all bills with status filter
+      const billsList = await fetchAll(token, orgId, "bills", "bills");
+      const bills = billsList.map((b: any) => mapBill(b, orgId));
       await upsert(SUPABASE_URL, KEY, "bills", bills);
       summary["bills"] = (summary["bills"] || 0) + bills.length;
 
@@ -471,7 +482,21 @@ serve(async (req) => {
       summary["vendor_credits"] = (summary["vendor_credits"] || 0) + vendorCredits.length;
 
       // ── ACCOUNTING / JOURNALS ────────────────────────────────────────────────
-      const journals = (await fetchAll(token, orgId, "journals", "journals")).map(j => mapJournal(j, orgId));
+      // Fetch journal details to get line_items (ledger names)
+      const journalList = await fetchAll(token, orgId, "journals", "journals");
+      const journals: any[] = [];
+      for (const jrn of journalList) {
+        try {
+          const res = await fetch(
+            `https://www.zohoapis.in/books/v3/journals/${jrn.journal_id}?organization_id=${orgId}`,
+            { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
+          );
+          const d = await res.json();
+          journals.push(mapJournal(d.journal || jrn, orgId));
+        } catch {
+          journals.push(mapJournal(jrn, orgId));
+        }
+      }
       await upsert(SUPABASE_URL, KEY, "journals", journals);
       summary["journals"] = (summary["journals"] || 0) + journals.length;
 

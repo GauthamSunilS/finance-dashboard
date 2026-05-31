@@ -425,14 +425,21 @@ function AccountingModule({ orgId }: { orgId: string }) {
               <Card label="Total Received" value={fmt(d.reduce((s, i) => s + i.amount, 0), d[0]?.currency_code)} color="text-emerald-600" />
               <Card label="Avg per Receipt" value={fmt(d.length > 0 ? d.reduce((s, i) => s + i.amount, 0) / d.length : 0, d[0]?.currency_code)} />
             </div>
-            <Table cols={["Receipt #", "Customer", "Date", "Mode", "Reference", "Amount"]}
-              rows={d.map(p => [
-                <span className="font-mono text-xs text-zinc-500">{p.payment_number}</span>,
-                p.customer_name, fdate(p.date),
-                <span className="text-xs bg-zinc-100 px-2 py-0.5 rounded">{p.payment_mode || "—"}</span>,
-                <span className="text-xs text-zinc-400">{p.reference_number || "—"}</span>,
-                <span className="font-semibold text-emerald-600">{fmt(p.amount, p.currency_code)}</span>,
-              ])} empty="No payments received" />
+            <Table cols={["Receipt #", "Customer", "Date", "Mode", "Foreign Amt", "Forex Rate", "INR Amount"]}
+              rows={d.map(p => {
+                const isForeign = p.currency_code && p.currency_code !== "INR";
+                const rate = p.exchange_rate || 1;
+                const inrAmt = isForeign ? p.amount : p.amount;
+                const foreignAmt = isForeign && rate > 1 ? p.amount / rate : null;
+                return [
+                  <span className="font-mono text-xs text-zinc-500">{p.payment_number}</span>,
+                  p.customer_name, fdate(p.date),
+                  <span className="text-xs bg-zinc-100 px-2 py-0.5 rounded">{p.payment_mode || "—"}</span>,
+                  <span className="text-zinc-600">{foreignAmt ? fmt(foreignAmt, p.currency_code) : "—"}</span>,
+                  <span className="text-xs text-zinc-400">{isForeign && rate > 1 ? `1 ${p.currency_code} = ₹${rate.toFixed(2)}` : "—"}</span>,
+                  <span className="font-semibold text-emerald-600">{inr(inrAmt)}</span>,
+                ];
+              })} empty="No payments received" />
           </div>
         );
       })()}

@@ -116,8 +116,8 @@ const TDS: { sec: string; label: string; kw: string[]; excludeKw: string[]; min:
   { sec: "194I", label: "194I – Rent", kw: ["rent","lease","rental","property management","office space","premises","godown","warehouse"], excludeKw: ["bank charges","bank fee"], min: 1, rate: 10 },
   { sec: "194A", label: "194A – Interest", kw: ["interest paid","loan interest","interest on loan","interest expense","interest charges"], excludeKw: ["bank charges","service charge","processing fee","gst","tax"], min: 1, rate: 10 },
 ];
-function inferTds(vendor: string, account: string, amount: number) {
-  const t = `${vendor} ${account}`.toLowerCase();
+function inferTds(vendor: string, account: string, amount: number, description?: string) {
+  const t = `${vendor} ${account} ${description || ""}`.toLowerCase();
   // Skip known non-TDS accounts
   const skip = ["bank charges","bank fee","bank service","gst","tax","petty cash","salary advance","reimbursement","travel expense","conveyance","postage","stationery","printing","office supplies","cash in hand"];
   if (skip.some(s => t.includes(s))) return null;
@@ -1122,7 +1122,7 @@ function LedgerTDSTracker({ expenses, bills, orgId }: {
         const savedMap: Record<string, any> = {};
         for (const s of (sv || [])) savedMap[s.record_id || ""] = s.payload;
 
-        const makeRow = (id: string, date: string, vendor: string, account: string, amount: number, ref: string, source: "Bill" | "Expense"): TDSTxnRow => {
+        const makeRow = (id: string, date: string, vendor: string, account: string, amount: number, ref: string, source: "Bill" | "Expense", desc?: string): TDSTxnRow => {
           const key = `txn||${source}||${id}`;
           const sv2 = savedMap[key];
           if (sv2) {
@@ -1130,7 +1130,7 @@ function LedgerTDSTracker({ expenses, bills, orgId }: {
             return { id, date, vendor: vendor||"—", account: account||"—", amount, ref, source, ...sv2, saved: true };
           }
           // Default inference
-          const inf = isSalaryAcct(account) ? null : inferTds(vendor, account, amount);
+          const inf = isSalaryAcct(account) ? null : inferTds(vendor, account, amount, desc);
           return {
             id, date, vendor: vendor||"—", account: account||"—", amount, ref, source,
             tdsApplicable: inf !== null,
@@ -1142,7 +1142,7 @@ function LedgerTDSTracker({ expenses, bills, orgId }: {
         };
 
         const bRows = bills.map(b => makeRow(b.id, b.date, b.vendor_name||"", b.vendor_name||"", b.total, b.bill_number||b.id.slice(-8), "Bill"));
-        const eRows = expenses.map(e => makeRow(e.id, e.date, e.vendor_name||"", e.account_name||"", e.total, e.expense_number||e.id.slice(-8), "Expense"));
+        const eRows = expenses.map(e => makeRow(e.id, e.date, e.vendor_name||"", e.account_name||"", e.total, e.expense_number||e.id.slice(-8), "Expense", e.description||""));
         setRows([...bRows, ...eRows]);
         setLoading(false);
       });

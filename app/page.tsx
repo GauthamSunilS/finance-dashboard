@@ -113,13 +113,13 @@ const TDS: { sec: string; label: string; kw: string[]; excludeKw: string[]; min:
   { sec: "194C", label: "194C – Contractors", kw: ["contractor","construction","transport","courier","logistics","freight","security","catering","cleaning","labour","manpower","event","fabrication","printing","repair","maintenance"], excludeKw: ["software","subscription","saas","cloud"], min: 30000, rate: 2 },
   { sec: "194J", label: "194J – Professional", kw: ["consultant","consulting","professional","legal","advocate","chartered","software","it service","technology","designer","freelancer","saas","advisory","audit fees","technical","dues & subscription","subscription","cloud"], excludeKw: ["bank","hardware","material"], min: 30000, rate: 10 },
   { sec: "194H", label: "194H – Commission", kw: ["commission","brokerage","referral fee","agent fee","dealer commission"], excludeKw: [], min: 15000, rate: 5 },
-  { sec: "194I", label: "194I – Rent", kw: ["rent","lease","rental","property management","office space","premises","godown","warehouse"], excludeKw: [], min: 50000, rate: 10 },
+  { sec: "194I", label: "194I – Rent", kw: ["rent","lease","rental","property management","office space","premises","godown","warehouse"], excludeKw: ["current account","savings account","bank account","bank charges"], min: 50000, rate: 10 },
   { sec: "194A", label: "194A – Interest", kw: ["interest paid","loan interest","interest on loan","interest expense","interest charges"], excludeKw: ["bank charges","service charge","processing fee","gst","tax"], min: 5000, rate: 10 },
 ];
 function inferTds(vendor: string, account: string, amount: number) {
   const t = `${vendor} ${account}`.toLowerCase();
   // Skip known non-TDS accounts
-  const skip = ["bank charges","bank fee","bank service","gst","tax","petty cash","salary advance","reimbursement","travel expense","conveyance","postage","stationery","printing","office supplies"];
+  const skip = ["bank charges","bank fee","bank service","gst","tax","petty cash","salary advance","reimbursement","travel expense","conveyance","postage","stationery","printing","office supplies","current account","savings account","cash in hand","journal entry","vendor payment"];
   if (skip.some(s => t.includes(s))) return null;
   for (const r of TDS) {
     if (r.kw.some(k => t.includes(k)) && !r.excludeKw.some(k => t.includes(k)) && amount >= r.min) return r;
@@ -985,10 +985,10 @@ function EditableTDSTable({ items, orgId }: { items: { exp: Expense; rule: typeo
       </div>
       <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-sm" style={{tableLayout: "auto"}}>
             <thead>
               <tr className="border-b border-zinc-200 bg-zinc-50">
-                <th className="text-left px-3 py-3 text-xs font-semibold text-zinc-500 uppercase">Date</th>
+                <th className="text-left px-3 py-3 text-xs font-semibold text-zinc-500 uppercase whitespace-nowrap">Date</th>
                 <th className="text-left px-3 py-3 text-xs font-semibold text-zinc-500 uppercase">Vendor</th>
                 <th className="text-left px-3 py-3 text-xs font-semibold text-zinc-500 uppercase">Account</th>
                 <th className="text-left px-3 py-3 text-xs font-semibold text-zinc-500 uppercase">FY</th>
@@ -1009,8 +1009,11 @@ function EditableTDSTable({ items, orgId }: { items: { exp: Expense; rule: typeo
                   <tr key={item.exp.id}
                     className={`border-b border-zinc-100 last:border-0 ${row.excluded ? "opacity-40 bg-zinc-50" : "hover:bg-zinc-50"} ${isOverridden ? "bg-amber-50/30" : ""}`}>
                     <td className="px-3 py-2.5 text-zinc-600 whitespace-nowrap text-xs">{fdate(item.exp.date)}</td>
-                    <td className="px-3 py-2.5 text-zinc-700 text-xs max-w-[120px] truncate">{item.exp.vendor_name || "—"}</td>
-                    <td className="px-3 py-2.5 text-zinc-500 text-xs max-w-[120px] truncate">{item.exp.account_name || "—"}</td>
+                    <td className="px-3 py-2.5 text-zinc-700 text-xs whitespace-nowrap">{item.exp.vendor_name || "—"}</td>
+                    <td className="px-3 py-2.5 text-zinc-500 text-xs">
+                      <span className="block">{item.exp.account_name || "—"}</span>
+                      {item.exp.description && <span className="block text-zinc-300 text-[10px] truncate max-w-[180px]" title={item.exp.description}>{item.exp.description}</span>}
+                    </td>
                     <td className="px-3 py-2.5 text-zinc-400 text-xs whitespace-nowrap">{getFY(item.exp.date || "")}</td>
                     <td className="px-3 py-2.5 text-right text-zinc-700 text-xs">{inr(item.exp.total)}</td>
                     <td className="px-3 py-2.5 text-center">

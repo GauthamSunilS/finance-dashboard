@@ -216,7 +216,7 @@ function InvoicesTab({ clientId }: { clientId: string }) {
               {filtered.length === 0 ? (
                 <tr><td colSpan={9} className="text-center py-10 text-zinc-500">No invoices found</td></tr>
               ) : filtered.map((inv, i) => (
-                <tr key={inv.id} className={`border-b border-zinc-100 hover:bg-zinc-50 ${i % 2 === 0 ? "" : "bg-white/50"}`}>
+                <tr key={inv.id} className={`border-b border-zinc-100 hover:bg-zinc-50 ${i % 2 === 0 ? "" : "bg-zinc-500"}`}>
                   <td className="px-4 py-3 font-mono text-zinc-500 text-xs">{inv.invoice_number}</td>
                   <td className="px-4 py-3 font-medium text-zinc-900 max-w-[160px] truncate">
                     {inv.customer_name}
@@ -291,7 +291,7 @@ function SalesOrdersTab({ clientId }: { clientId: string }) {
               {filtered.length === 0 ? (
                 <tr><td colSpan={8} className="text-center py-10 text-zinc-500">No data yet — sync from Zoho to populate</td></tr>
               ) : filtered.map((s, i) => (
-                <tr key={s.id} className={`border-b border-zinc-100 hover:bg-zinc-50 ${i % 2 === 0 ? "" : "bg-white/50"}`}>
+                <tr key={s.id} className={`border-b border-zinc-100 hover:bg-zinc-50 ${i % 2 === 0 ? "" : "bg-zinc-500"}`}>
                   <td className="px-4 py-3 font-mono text-zinc-500 text-xs">{s.salesorder_number}</td>
                   <td className="px-4 py-3 font-medium text-zinc-900">{s.customer_name}</td>
                   <td className="px-4 py-3 text-zinc-500">{fmtDate(s.date)}</td>
@@ -358,7 +358,7 @@ function EstimatesTab({ clientId }: { clientId: string }) {
               {filtered.length === 0 ? (
                 <tr><td colSpan={8} className="text-center py-10 text-zinc-500">No data yet — sync from Zoho to populate</td></tr>
               ) : filtered.map((e, i) => (
-                <tr key={e.id} className={`border-b border-zinc-100 hover:bg-zinc-50 ${i % 2 === 0 ? "" : "bg-white/50"}`}>
+                <tr key={e.id} className={`border-b border-zinc-100 hover:bg-zinc-50 ${i % 2 === 0 ? "" : "bg-zinc-500"}`}>
                   <td className="px-4 py-3 font-mono text-zinc-500 text-xs">{e.estimate_number}</td>
                   <td className="px-4 py-3 font-medium text-zinc-900">{e.customer_name}</td>
                   <td className="px-4 py-3 text-zinc-500">{fmtDate(e.date)}</td>
@@ -422,7 +422,7 @@ function PaymentsTab({ clientId }: { clientId: string }) {
               {filtered.length === 0 ? (
                 <tr><td colSpan={5} className="text-center py-10 text-zinc-500">No data yet — sync from Zoho to populate</td></tr>
               ) : filtered.map((p, i) => (
-                <tr key={p.id} className={`border-b border-zinc-100 hover:bg-zinc-50 ${i % 2 === 0 ? "" : "bg-white/50"}`}>
+                <tr key={p.id} className={`border-b border-zinc-100 hover:bg-zinc-50 ${i % 2 === 0 ? "" : "bg-zinc-500"}`}>
                   <td className="px-4 py-3 font-mono text-zinc-500 text-xs">{p.payment_number}</td>
                   <td className="px-4 py-3 font-medium text-zinc-900">{p.customer_name}</td>
                   <td className="px-4 py-3 text-zinc-500">{fmtDate(p.date)}</td>
@@ -489,7 +489,7 @@ function ExpensesTab({ clientId }: { clientId: string }) {
               {filtered.length === 0 ? (
                 <tr><td colSpan={8} className="text-center py-10 text-zinc-500">No data yet — sync from Zoho to populate</td></tr>
               ) : filtered.map((e, i) => (
-                <tr key={e.id} className={`border-b border-zinc-100 hover:bg-zinc-50 ${i % 2 === 0 ? "" : "bg-white/50"}`}>
+                <tr key={e.id} className={`border-b border-zinc-100 hover:bg-zinc-50 ${i % 2 === 0 ? "" : "bg-zinc-500"}`}>
                   <td className="px-4 py-3 font-mono text-zinc-500 text-xs">{e.expense_number?.slice(-10) || "—"}</td>
                   <td className="px-4 py-3 text-zinc-700">{e.account_name}</td>
                   <td className="px-4 py-3 text-zinc-700">{e.vendor_name}</td>
@@ -939,7 +939,7 @@ function buildCustomer360(invoices: Invoice[], payments: Payment[], salesOrders:
 }
 
 const SEVSTYLE: Record<string, { border: string; badge: string; bg: string; text: string }> = {
-  Critical: { border: "border-red-500/40",   badge: "bg-red-500 text-black",    bg: "bg-red-950/25",   text: "text-red-600" },
+  Critical: { border: "border-red-500/40",   badge: "bg-red-500 text-black",    bg: "bg-red-50",   text: "text-red-600" },
   Warning:  { border: "border-amber-500/35",  badge: "bg-amber-400 text-black",  bg: "bg-amber-50", text: "text-amber-600" },
   Info:     { border: "border-sky-500/30",    badge: "bg-sky-600 text-black",    bg: "bg-sky-50",   text: "text-sky-600" },
 };
@@ -1417,7 +1417,7 @@ function AuditTab({ clientId }: { clientId: string }) {
                     <span className="text-zinc-400 text-xs ml-2 mt-1 select-none">{isOpen ? "▲" : "▼"}</span>
                   </div>
                   {isOpen && (
-                    <div className="border-t border-white/5 px-4 pb-4 pt-3 space-y-3">
+                    <div className="border-t border-zinc-100 px-4 pb-4 pt-3 space-y-3">
                       <div className="grid grid-cols-2 gap-2 text-xs">
                         <div><span className="text-zinc-400 block">Reference</span><span className="text-zinc-800 font-mono">{f.ref}</span></div>
                         <div><span className="text-zinc-400 block">Amount</span><span className="text-zinc-800 font-bold">{inrFmt(f.amount)}</span></div>
@@ -1662,10 +1662,8 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
                 onClick={() => { window.location.hash = client.id + "|invoices"; setActiveClientId(client.id); }}
                 className="w-full grid grid-cols-12 items-center px-6 py-4 text-left hover:bg-zinc-50 transition border-b border-zinc-100 last:border-0 group"
               >
-                <div className="col-span-9 flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-black text-black flex items-center justify-center text-xs font-bold flex-shrink-0">
-                    {client.name?.charAt(0).toUpperCase()}
-                  </div>
+                <div className="col-span-9 flex items-center gap-4">
+                  <span className="text-xs text-zinc-400 w-5 text-right flex-shrink-0">{String(clients.indexOf(client) + 1).padStart(2, "0")}</span>
                   <span className="font-semibold text-black text-sm group-hover:underline">{client.name}</span>
                 </div>
                 <div className="col-span-2">

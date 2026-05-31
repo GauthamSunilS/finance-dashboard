@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 
 
@@ -113,13 +113,13 @@ const TDS: { sec: string; label: string; kw: string[]; excludeKw: string[]; min:
   { sec: "194C", label: "194C – Contractors", kw: ["contractor","construction","transport","courier","logistics","freight","security","catering","cleaning","labour","manpower","event","fabrication","printing","repair","maintenance"], excludeKw: ["software","subscription","saas","cloud"], min: 30000, rate: 2 },
   { sec: "194J", label: "194J – Professional", kw: ["consultant","consulting","professional","legal","advocate","chartered","software","it service","technology","designer","freelancer","saas","advisory","audit fees","technical","dues & subscription","subscription","cloud"], excludeKw: ["bank","hardware","material"], min: 30000, rate: 10 },
   { sec: "194H", label: "194H – Commission", kw: ["commission","brokerage","referral fee","agent fee","dealer commission"], excludeKw: [], min: 15000, rate: 5 },
-  { sec: "194I", label: "194I – Rent", kw: ["rent","lease","rental","property management","office space","premises","godown","warehouse"], excludeKw: ["current account","savings account","bank account","bank charges"], min: 50000, rate: 10 },
+  { sec: "194I", label: "194I – Rent", kw: ["rent","lease","rental","property management","office space","premises","godown","warehouse"], excludeKw: ["bank charges","bank fee"], min: 50000, rate: 10 },
   { sec: "194A", label: "194A – Interest", kw: ["interest paid","loan interest","interest on loan","interest expense","interest charges"], excludeKw: ["bank charges","service charge","processing fee","gst","tax"], min: 5000, rate: 10 },
 ];
 function inferTds(vendor: string, account: string, amount: number) {
   const t = `${vendor} ${account}`.toLowerCase();
   // Skip known non-TDS accounts
-  const skip = ["bank charges","bank fee","bank service","gst","tax","petty cash","salary advance","reimbursement","travel expense","conveyance","postage","stationery","printing","office supplies","current account","savings account","cash in hand","journal entry","vendor payment"];
+  const skip = ["bank charges","bank fee","bank service","gst","tax","petty cash","salary advance","reimbursement","travel expense","conveyance","postage","stationery","printing","office supplies","cash in hand"];
   if (skip.some(s => t.includes(s))) return null;
   for (const r of TDS) {
     if (r.kw.some(k => t.includes(k)) && !r.excludeKw.some(k => t.includes(k)) && amount >= r.min) return r;
@@ -1086,6 +1086,166 @@ function EditableTDSTable({ items, orgId }: { items: { exp: Expense; rule: typeo
   );
 }
 
+
+// ─── Ledger TDS Tracker ───────────────────────────────────────────────────────
+type TDSLedgerRow = {
+  key: string; vendor: string; account: string; source: string;
+  totalAmount: number; transactions: number;
+  eligible: boolean; sec: string; rate: number; tdsAmount: number; pan: string; note: string;
+};
+
+function LedgerTDSTracker({ expenses, bills, vendorPayments, journals, orgId }: {
+  expenses: Expense[]; bills: Bill[]; vendorPayments: VendorPayment[]; journals: Journal[]; orgId: string;
+}) {
+  const [rows, setRows] = React.useState<TDSLedgerRow[]>([]);
+  const [saved, setSaved] = React.useState(false);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    const map: Record<string, { vendor: string; account: string; total: number; txns: number; source: string }> = {};
+    const add = (vendor: string, account: string, amount: number, source: string) => {
+      const key = (vendor + "|" + account).toLowerCase().trim();
+      if (!key || key === "|") return;
+      if (!map[key]) map[key] = { vendor: vendor || "—", account: account || "—", total: 0, txns: 0, source };
+      map[key].total += amount; map[key].txns++;
+    };
+    const bankKw = ["current account","savings account","cash","hdfc","icici","sbi","axis","kotak","indusind","yes bank"];
+    const isBank = (s: string) => bankKw.some(b => s.toLowerCase().includes(b));
+
+    for (const e of expenses) add(e.vendor_name || "", e.account_name || "", e.total, "Expense");
+    for (const b of bills) add(b.vendor_name || "", b.vendor_name || "Bill", b.total, "Bill");
+    for (const vp of vendorPayments) add(vp.vendor_name || "", "Vendor Payment", vp.amount, "VendorPmt");
+    for (const j of journals) {
+      try {
+        const lines = JSON.parse(j.line_items || "[]");
+        for (const l of lines) {
+          const amt = Number(l.amount || l.debit || 0);
+          const acct = l.account_name || "";
+          if ((l.debit_or_credit === "debit" || Number(l.debit || 0) > 0) && amt > 0 && !isBank(acct))
+            add(l.contact_name || l.customer_name || j.notes || "", acct, amt, "Journal");
+        }
+      } catch {}
+    }
+
+    supabase.from("pending_changes").select("*").eq("org_id", orgId).eq("module", "tds_ledger").then(({ data: sv }) => {
+      const savedMap: Record<string, any> = {};
+      for (const s of (sv || [])) savedMap[s.record_id || ""] = s.payload;
+      const TDS_SECTIONS = ["192","193","194","194A","194B","194BB","194C","194D","194G","194H","194I","194IB","194IC","194J","194K","194LA","194M","194N","194O","194Q","195","206AA"];
+      const result: TDSLedgerRow[] = Object.entries(map)
+        .sort((a, b) => b[1].total - a[1].total)
+        .map(([key, entry]) => {
+          const sv2 = savedMap[key] || {};
+          const inf = inferTds(entry.vendor, entry.account, entry.total / entry.txns);
+          return {
+            key, vendor: entry.vendor, account: entry.account, source: entry.source,
+            totalAmount: entry.total, transactions: entry.txns,
+            eligible: sv2.eligible !== undefined ? sv2.eligible : inf !== null,
+            sec: sv2.sec || inf?.sec || "194J",
+            rate: sv2.rate !== undefined ? sv2.rate : (inf?.rate || 10),
+            tdsAmount: sv2.tdsAmount !== undefined ? sv2.tdsAmount : (inf ? Math.round(entry.total * (inf.rate / 100)) : 0),
+            pan: sv2.pan || "", note: sv2.note || "",
+          };
+        });
+      setRows(result); setLoading(false);
+    });
+  }, [orgId, expenses.length, bills.length, vendorPayments.length]);
+
+  const save = async (key: string, updates: Partial<TDSLedgerRow>) => {
+    setRows(prev => prev.map(r => {
+      if (r.key !== key) return r;
+      const updated = { ...r, ...updates };
+      if (updates.rate !== undefined) updated.tdsAmount = Math.round(r.totalAmount * (updates.rate / 100));
+      return updated;
+    }));
+    const row = rows.find(r => r.key === key);
+    if (!row) return;
+    const payload = { ...row, ...updates };
+    await supabase.from("pending_changes").upsert({ org_id: orgId, module: "tds_ledger", action: "update", record_id: key, payload, status: "saved" }, { onConflict: "org_id,module,record_id" });
+    setSaved(true); setTimeout(() => setSaved(false), 1500);
+  };
+
+  const eligible = rows.filter(r => r.eligible);
+  const totalTDS = eligible.reduce((s, r) => s + r.tdsAmount, 0);
+  const missingPAN = eligible.filter(r => !r.pan).length;
+  const TDS_SECTIONS = ["192","194A","194C","194D","194G","194H","194I","194IB","194J","194K","194M","194N","194O","194Q","195","206AA"];
+
+  if (loading) return <div className="text-center py-10 text-zinc-400 text-sm">Building ledger summary...</div>;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-4 gap-3">
+        <Card label="Total Ledgers" value={String(rows.length)} />
+        <Card label="TDS Eligible" value={String(eligible.length)} color="text-violet-600" />
+        <Card label="Total TDS Liability" value={inr(totalTDS)} color="text-violet-600" />
+        <Card label="Missing PAN" value={String(missingPAN)} color={missingPAN > 0 ? "text-red-600" : "text-emerald-600"} />
+      </div>
+      <div className="bg-violet-50 border border-violet-200 rounded-xl p-3 flex items-center justify-between">
+        <p className="text-xs text-violet-700">Toggle YES/NO for TDS eligibility. Edit section, rate, TDS amount and PAN. All changes auto-saved.</p>
+        {saved && <span className="text-xs text-emerald-600 font-bold animate-pulse">✓ Saved</span>}
+      </div>
+      <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead><tr className="border-b border-zinc-200 bg-zinc-50">
+              {["Vendor / Ledger","Account","Source","Txns","Total Paid","TDS?","Section","Rate %","TDS ₹","PAN","Note"].map((h,i) => (
+                <th key={i} className={`px-3 py-2.5 text-zinc-500 uppercase tracking-wide font-semibold ${i >= 4 ? "text-right" : "text-left"} whitespace-nowrap`}>{h}</th>
+              ))}
+            </tr></thead>
+            <tbody>
+              {rows.map(row => (
+                <tr key={row.key} className={`border-b border-zinc-100 last:border-0 ${row.eligible ? "hover:bg-zinc-50" : "opacity-40 bg-zinc-50"}`}>
+                  <td className="px-3 py-2 font-medium text-zinc-800 max-w-[140px]"><span title={row.vendor} className="block truncate">{row.vendor}</span></td>
+                  <td className="px-3 py-2 text-zinc-500 max-w-[140px]"><span title={row.account} className="block truncate">{row.account}</span></td>
+                  <td className="px-3 py-2"><span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${row.source==="Bill"?"bg-blue-100 text-blue-700":row.source==="Expense"?"bg-emerald-100 text-emerald-700":row.source==="Journal"?"bg-purple-100 text-purple-700":"bg-zinc-100 text-zinc-500"}`}>{row.source}</span></td>
+                  <td className="px-3 py-2 text-right text-zinc-500">{row.transactions}</td>
+                  <td className="px-3 py-2 text-right font-semibold text-zinc-800">{inr(row.totalAmount)}</td>
+                  <td className="px-3 py-2 text-center">
+                    <button onClick={() => save(row.key, { eligible: !row.eligible })}
+                      className={`text-xs px-2 py-0.5 rounded-full font-bold border transition ${row.eligible ? "bg-violet-600 text-white border-violet-600" : "bg-white text-zinc-400 border-zinc-300 hover:border-violet-400"}`}>
+                      {row.eligible ? "YES" : "NO"}
+                    </button>
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    {row.eligible ? <select value={row.sec} onChange={e => save(row.key, { sec: e.target.value })}
+                      className="text-xs border border-zinc-200 rounded px-1 py-0.5 font-mono font-bold text-violet-700 bg-white focus:outline-none focus:border-violet-500">
+                      {TDS_SECTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select> : <span className="text-zinc-300">—</span>}
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    {row.eligible ? <input type="number" value={row.rate} onChange={e => save(row.key, { rate: Number(e.target.value) })}
+                      className="w-12 text-xs border border-zinc-200 rounded px-1 py-0.5 text-right focus:outline-none focus:border-violet-500" /> : <span className="text-zinc-300">—</span>}
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    {row.eligible ? <input type="number" value={row.tdsAmount} onChange={e => save(row.key, { tdsAmount: Number(e.target.value) })}
+                      className="w-20 text-xs border border-zinc-200 rounded px-1 py-0.5 text-right font-bold text-violet-700 focus:outline-none focus:border-violet-500" /> : <span className="text-zinc-300">—</span>}
+                  </td>
+                  <td className="px-3 py-2">
+                    <input value={row.pan} onChange={e => save(row.key, { pan: e.target.value.toUpperCase() })}
+                      placeholder="AAAAA0000A" maxLength={10}
+                      className={`w-24 text-xs border rounded px-1.5 py-0.5 font-mono uppercase focus:outline-none focus:border-black ${row.eligible && !row.pan ? "border-red-300 bg-red-50" : "border-zinc-200"}`} />
+                  </td>
+                  <td className="px-3 py-2">
+                    <input value={row.note} onChange={e => save(row.key, { note: e.target.value })}
+                      placeholder="Note..." className="w-24 text-xs border border-zinc-200 rounded px-1.5 py-0.5 focus:outline-none focus:border-black" />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            {eligible.length > 0 && <tfoot>
+              <tr className="border-t-2 border-zinc-300 bg-zinc-50 font-bold">
+                <td colSpan={8} className="px-3 py-2.5 text-sm text-zinc-700">Total TDS Liability</td>
+                <td className="px-3 py-2.5 text-right text-violet-700 text-sm">{inr(totalTDS)}</td>
+                <td colSpan={2} className="px-3 py-2.5 text-xs text-red-500">{missingPAN > 0 ? `⚠ ${missingPAN} PAN missing` : "✓ All PAN captured"}</td>
+              </tr>
+            </tfoot>}
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 // ─── Internal Audit Module ────────────────────────────────────────────────────
 function AuditModule({ orgId, initSection = "" }: { orgId: string; initSection?: string }) {
   const [section, setSection] = useState<AuditSection>(() => {
@@ -1499,150 +1659,13 @@ function AuditModule({ orgId, initSection = "" }: { orgId: string; initSection?:
       })()}
 
       {/* TDS Summary */}
-      {section === "tds" && (() => {
-        const filtExp = filterByFYMonth(expenses, fy, month);
-        const filtBills = filterByFYMonth(bills, fy, month);
-        const filtVP = filterByFYMonth(vendorPayments, fy, month);
-        const filtJrn = filterByFYMonth(journals, fy, month);
-
-        // Bills as TDS source
-        const billAsExp: Expense[] = filtBills.map(b => ({
-          id: "bill_"+b.id, expense_number: b.bill_number, account_name: b.vendor_name || "Bill",
-          vendor_name: b.vendor_name, status: b.status, date: b.date,
-          total: b.total, sub_total: b.total, tax_total: 0,
-          currency_code: b.currency_code, description: null,
-        } as Expense));
-
-        // Vendor payments as TDS source
-        const vpAsExp: Expense[] = filtVP.map(vp => ({
-          id: "vp_"+vp.id, expense_number: vp.payment_number || vp.id, account_name: "Vendor Payment",
-          vendor_name: vp.vendor_name, status: "paid", date: vp.date,
-          total: vp.amount, sub_total: vp.amount, tax_total: 0,
-          currency_code: vp.currency_code, description: null,
-        } as Expense));
-
-        // Journal debit lines as TDS source
-        const jrnAsExp: Expense[] = filtJrn.flatMap(j => {
-          try {
-            const lines = JSON.parse(j.line_items || "[]");
-            return lines
-              .filter((l: any) => (l.debit_or_credit === "debit" || Number(l.debit || 0) > 0) && Number(l.amount || l.debit || 0) > 0)
-              .map((l: any) => ({
-                id: "jrn_"+j.id+"_"+(l.account_name||""), expense_number: j.entry_number || j.id,
-                account_name: l.account_name || "", vendor_name: l.contact_name || l.customer_name || "",
-                status: "published", date: j.journal_date,
-                total: Number(l.amount || l.debit || 0), sub_total: Number(l.amount || l.debit || 0),
-                tax_total: 0, currency_code: (j as any).currency_code || "INR",
-                description: j.notes,
-              } as Expense));
-          } catch { return []; }
-        });
-
-        // Combine all sources - deduplicate by vendor+amount+date
-        const seen = new Set<string>();
-        const allSources = [...filtExp, ...billAsExp, ...vpAsExp, ...jrnAsExp].filter(e => {
-          const key = `${e.vendor_name}|${e.total}|${e.date}|${e.account_name}`;
-          if (seen.has(key)) return false;
-          seen.add(key); return true;
-        });
-
-        const tdsItems = allSources.map(exp => {
-          const rule = inferTds(exp.vendor_name || "", exp.account_name || "", exp.total);
-          if (!rule) return null;
-          return { exp, rule, expectedTds: Math.round(exp.total * rule.rate / 100) };
-        }).filter(Boolean) as { exp: Expense; rule: typeof TDS[0]; expectedTds: number }[];
-
-        // Month-wise TDS breakdown
-        const byMonth: Record<string, { count: number; total: number; tds: number; fy: string }> = {};
-        for (const t of tdsItems) {
-          const m = t.exp.date?.slice(0, 7) || "unknown";
-          if (!byMonth[m]) byMonth[m] = { count: 0, total: 0, tds: 0, fy: getFY(t.exp.date || "") };
-          byMonth[m].count++; byMonth[m].total += t.exp.total; byMonth[m].tds += t.expectedTds;
-        }
-
-        // Section-wise TDS breakdown
-        const bySec: Record<string, { count: number; total: number; tds: number }> = {};
-        for (const t of tdsItems) {
-          if (!bySec[t.rule.sec]) bySec[t.rule.sec] = { count: 0, total: 0, tds: 0 };
-          bySec[t.rule.sec].count++; bySec[t.rule.sec].total += t.exp.total; bySec[t.rule.sec].tds += t.expectedTds;
-        }
-        const monthRows = Object.entries(byMonth).sort((a, b) => b[0].localeCompare(a[0]));
-        const totTds = tdsItems.reduce((s, t) => s + t.expectedTds, 0);
-
-        return (
-          <div className="space-y-5">
-            <div className="bg-violet-50 border border-violet-200 rounded-xl p-4 text-xs text-violet-700">
-              <p className="font-semibold mb-1">TDS Summary — for Form 26Q / 27Q Quarterly Filing</p>
-              <p>Estimated TDS liability inferred from vendor name + account head + amount threshold. Deposit by 7th of next month (March: 30 Apr) via ITNS 281.</p>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <Card label="Total TDS Liability" value={inr(totTds)} color="text-violet-600" />
-              <Card label="Transactions Liable" value={String(tdsItems.length)} />
-              <Card label="Quarters in Period" value={String(new Set(tdsItems.map(t => { const d = new Date(t.exp.date); const q = Math.floor((d.getMonth() - 3 + 12) % 12 / 3); return `${getFY(t.exp.date)}-Q${q+1}`; })).size)} />
-            </div>
-
-            {/* Month-wise column view */}
-            <div>
-              <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">Month-wise TDS</p>
-              <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden shadow-sm">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-zinc-200 bg-zinc-50">
-                        {["Month", "FY", "Quarter", "Transactions", "Expense Total", "TDS Liability", "Deposit Due"].map((c, i) => (
-                          <th key={i} className={`px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide whitespace-nowrap ${i > 1 ? "text-right" : "text-left"}`}>{c}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {monthRows.map(([m, d]) => {
-                        const dt = new Date(m + "-01");
-                        const qNum = Math.floor((dt.getMonth() - 3 + 12) % 12 / 3) + 1;
-                        const depositDue = dt.getMonth() === 2 ? "30 Apr" : new Date(dt.getFullYear(), dt.getMonth() + 1, 7).toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
-                        return (
-                          <tr key={m} className="border-b border-zinc-100 last:border-0 hover:bg-zinc-50">
-                            <td className="px-4 py-3 font-semibold">{dt.toLocaleDateString("en-IN", { month: "short", year: "numeric" })}</td>
-                            <td className="px-4 py-3 text-xs text-zinc-400">{d.fy}</td>
-                            <td className="px-4 py-3 text-right"><span className="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full font-medium">Q{qNum}</span></td>
-                            <td className="px-4 py-3 text-right text-zinc-600">{d.count}</td>
-                            <td className="px-4 py-3 text-right text-zinc-600">{inr(d.total)}</td>
-                            <td className="px-4 py-3 text-right font-bold text-violet-600">{inr(d.tds)}</td>
-                            <td className="px-4 py-3 text-right text-xs font-medium text-zinc-500">{depositDue}</td>
-                          </tr>
-                        );
-                      })}
-                      {monthRows.length > 1 && (
-                        <tr className="border-t-2 border-zinc-300 bg-zinc-50 font-bold">
-                          <td className="px-4 py-3">Total</td>
-                          <td className="px-4 py-3"></td>
-                          <td className="px-4 py-3"></td>
-                          <td className="px-4 py-3 text-right">{tdsItems.length}</td>
-                          <td className="px-4 py-3 text-right">{inr(tdsItems.reduce((s,t)=>s+t.exp.total,0))}</td>
-                          <td className="px-4 py-3 text-right text-violet-600">{inr(totTds)}</td>
-                          <td className="px-4 py-3"></td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-
-            {/* Section-wise TDS */}
-            <div>
-              <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">Section-wise TDS</p>
-              <Table cols={["Section", "Transactions", "Expense Total", "TDS @Rate"]}
-                rows={Object.entries(bySec).map(([sec, d]) => {
-                  const rule = TDS.find(r => r.sec === sec)!;
-                  return [<span className="font-semibold">{rule.label}</span>, String(d.count), inr(d.total), <span className="font-bold text-violet-600">{inr(d.tds)}</span>];
-                })} empty="No TDS liability found" />
-            </div>
-
-            {/* Editable Transaction Detail */}
-            <EditableTDSTable items={tdsItems} orgId={orgId} />
-          </div>
-        );
-      })()}
+      {section === "tds" && <LedgerTDSTracker
+        expenses={filterByFYMonth(expenses, fy, month)}
+        bills={filterByFYMonth(bills, fy, month)}
+        vendorPayments={filterByFYMonth(vendorPayments, fy, month)}
+        journals={filterByFYMonth(journals, fy, month)}
+        orgId={orgId}
+      />}
 
       {/* All Findings */}
       {section === "findings" && (

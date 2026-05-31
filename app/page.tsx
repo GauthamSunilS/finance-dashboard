@@ -594,14 +594,10 @@ function JournalTable({ journals, onEdit, onDelete }: { journals: Journal[]; onE
 }
 
 // ─── Accounting Module ────────────────────────────────────────────────────────
-function AccountingModule({ orgId }: { orgId: string }) {
+function AccountingModule({ orgId, initSection = "" }: { orgId: string; initSection?: string }) {
   const [section, setSection] = useState<AcctSection>(() => {
-    try {
-      const s = window.location.hash.replace("#","").split("|")[2];
-      const valid = ["invoices","sales_orders","estimates","payments","expenses","purchases","bills","vendor_payments","journals"];
-      if (s && valid.includes(s)) return s as AcctSection;
-    } catch {}
-    return "invoices";
+    const valid = ["invoices","sales_orders","estimates","payments","expenses","purchases","bills","vendor_payments","journals"];
+    return (initSection && valid.includes(initSection) ? initSection : "invoices") as AcctSection;
   });
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
@@ -925,14 +921,10 @@ function AccountingModule({ orgId }: { orgId: string }) {
 }
 
 // ─── Internal Audit Module ────────────────────────────────────────────────────
-function AuditModule({ orgId }: { orgId: string }) {
+function AuditModule({ orgId, initSection = "" }: { orgId: string; initSection?: string }) {
   const [section, setSection] = useState<AuditSection>(() => {
-    try {
-      const s = window.location.hash.replace("#","").split("|")[2];
-      const valid = ["overview","customers","so_match","po_match","gst","tds","findings"];
-      if (s && valid.includes(s)) return s as AuditSection;
-    } catch {}
-    return "overview";
+    const valid = ["overview","customers","so_match","po_match","gst","tds","findings"];
+    return (initSection && valid.includes(initSection) ? initSection : "overview") as AuditSection;
   });
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
@@ -1490,14 +1482,10 @@ function AuditModule({ orgId }: { orgId: string }) {
 }
 
 // ─── Compliance Module ────────────────────────────────────────────────────────
-function ComplianceModule({ orgId, clientName }: { orgId: string; clientName: string }) {
+function ComplianceModule({ orgId, clientName, initSection = "" }: { orgId: string; clientName: string; initSection?: string }) {
   const [section, setSection] = useState<CompSection>(() => {
-    try {
-      const s = window.location.hash.replace("#","").split("|")[2];
-      const valid = ["summary","gst_filing","tds_filing","pt_pf","it_filing"];
-      if (s && valid.includes(s)) return s as CompSection;
-    } catch {}
-    return "summary";
+    const valid = ["summary","gst_filing","tds_filing","pt_pf","it_filing"];
+    return (initSection && valid.includes(initSection) ? initSection : "summary") as CompSection;
   });
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -1777,7 +1765,11 @@ function ClientModule({ client, onBack }: { client: Client; onBack: () => void }
     } catch {}
     return "accounting";
   };
+  const getHashSection = (): string => {
+    try { return window.location.hash.replace("#","").split("|")[2] || ""; } catch { return ""; }
+  };
   const [module, setModule] = useState<Module>(getHashModule);
+  const [initSection] = useState<string>(getHashSection);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const orgId = client.org_id ?? client.id;
@@ -1836,9 +1828,9 @@ function ClientModule({ client, onBack }: { client: Client; onBack: () => void }
 
       {/* Module content */}
       <div className="max-w-7xl mx-auto px-6 py-6">
-        {module === "accounting" && <AccountingModule orgId={orgId} />}
-        {module === "audit" && <AuditModule orgId={orgId} />}
-        {module === "compliance" && <ComplianceModule orgId={orgId} clientName={client.name} />}
+        {module === "accounting" && <AccountingModule orgId={orgId} initSection={initSection} />}
+        {module === "audit" && <AuditModule orgId={orgId} initSection={initSection} />}
+        {module === "compliance" && <ComplianceModule orgId={orgId} clientName={client.name} initSection={initSection} />}
       </div>
     </div>
   );

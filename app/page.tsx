@@ -184,7 +184,7 @@ function FYMonthFilter({ dates, fy, month, onFY, onMonth, quarter, onQuarter }: 
       {onQuarter && (
         <>
           <span className="text-xs text-zinc-400 font-medium">Quarter:</span>
-          <select value={quarter || "All"} onChange={e => { onQuarter(e.target.value); onMonth("All"); }}
+          <select value={quarter || "All"} onChange={e => { onQuarter(e.target.value); }}
             className="text-xs border border-zinc-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-black bg-white">
             {quarters.map(q => <option key={q} value={q}>{q}</option>)}
           </select>
@@ -1622,7 +1622,7 @@ function AuditModule({ orgId, initSection = "" }: { orgId: string; initSection?:
       <FYMonthFilter
         dates={[...invoices, ...expenses, ...salesOrders, ...payments, ...bills, ...purchaseOrders, ...vendorPayments].map((i: any) => i.date || "")}
         fy={fy} month={month} onFY={v => { setFy(v); setMonth("All"); setAuditQuarter("All"); }} onMonth={v => { setMonth(v); setAuditQuarter("All"); }}
-        quarter={auditQuarter} onQuarter={setAuditQuarter} />
+        quarter={auditQuarter} onQuarter={v => { setAuditQuarter(v); setMonth("All"); }} />
 
       {/* Overview */}
       {section === "overview" && (

@@ -64,7 +64,7 @@ function Table({ cols, rows, empty = "No data" }: { cols: string[]; rows: React.
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-zinc-200 bg-zinc-50">
-              {cols.map((c, i) => <th key={i} className={`px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide ${i > 1 ? "text-right" : "text-left"}`}>{c}</th>)}
+              {cols.map((c, i) => <th key={i} className={`px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide ${i === cols.length - 1 ? "text-right" : "text-left"}`}>{c}</th>)}
             </tr>
           </thead>
           <tbody>
@@ -72,7 +72,7 @@ function Table({ cols, rows, empty = "No data" }: { cols: string[]; rows: React.
               ? <tr><td colSpan={cols.length} className="text-center py-10 text-zinc-400 text-sm">{empty}</td></tr>
               : rows.map((row, i) => (
                 <tr key={i} className="border-b border-zinc-100 last:border-0 hover:bg-zinc-50">
-                  {row.map((cell, j) => <td key={j} className={`px-4 py-3 ${j > 1 ? "text-right" : "text-left"} text-zinc-700`}>{cell}</td>)}
+                  {row.map((cell, j) => <td key={j} className={`px-4 py-3 ${j === row.length - 1 ? "text-right" : "text-left"} text-zinc-700`}>{cell}</td>)}
                 </tr>
               ))}
           </tbody>
@@ -455,13 +455,25 @@ function AccountingModule({ orgId }: { orgId: string }) {
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700">
               ⚠ Journal entries bypass automated TDS/GST checks. Each entry below is flagged for manual review in the Internal Audit module.
             </div>
-            <Table cols={["Entry #", "Date", "Notes", "Total"]}
-              rows={d.map(j => [
-                <span className="font-mono text-xs text-zinc-500">{j.entry_number || j.id.slice(-8)}</span>,
-                fdate(j.journal_date),
-                <span className="text-xs text-zinc-500 max-w-xs truncate">{j.notes || "—"}</span>,
-                <span className="font-semibold">{inr(j.total)}</span>,
-              ])} empty="No journal entries — sync from Zoho" />
+            <Table cols={["Entry #", "Date", "Type / Ledger", "Notes", "Total"]}
+              rows={d.map(j => {
+                // Parse line_items to show ledger names
+                let ledgers = "—";
+                try {
+                  const lines = JSON.parse(j.line_items || "[]");
+                  if (lines.length > 0) {
+                    ledgers = lines.slice(0, 2).map((l: any) => l.account_name || l.account || "").filter(Boolean).join(" / ");
+                    if (lines.length > 2) ledgers += ` +${lines.length - 2} more`;
+                  }
+                } catch {}
+                return [
+                  <span className="font-mono text-xs text-zinc-500">{j.entry_number || j.id.slice(-8)}</span>,
+                  fdate(j.journal_date),
+                  <span className="text-xs text-zinc-600 max-w-[160px] truncate block">{ledgers}</span>,
+                  <span className="text-xs text-zinc-400 max-w-[200px] truncate block">{j.notes || "—"}</span>,
+                  <span className="font-semibold">{inr(j.total)}</span>,
+                ];
+              })} empty="No journal entries — sync from Zoho" />
           </div>
         );
       })()}

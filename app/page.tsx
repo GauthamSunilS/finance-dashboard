@@ -2562,13 +2562,29 @@ function MiniBar({ value, max, color = "#000" }: { value: number; max: number; c
   );
 }
 
+// Vertical bar chart for time-series (e.g. monthly revenue)
+function VBars({ data, color = "#111" }: { data: { label: string; value: number }[]; color?: string }) {
+  const max = Math.max(1, ...data.map(d => d.value));
+  return (
+    <div className="flex items-end gap-1.5 h-44 pt-6">
+      {data.map((d, i) => (
+        <div key={i} className="flex-1 flex flex-col items-center justify-end h-full group relative">
+          <span className="absolute -top-0 text-[9px] text-zinc-500 fin-num opacity-0 group-hover:opacity-100 transition whitespace-nowrap">{inr(d.value)}</span>
+          <div className="w-full rounded-t transition-all hover:opacity-80" style={{ height: `${Math.max(1, (d.value / max) * 100)}%`, background: color }} />
+          <span className="text-[9px] text-zinc-400 mt-1 fin-num">{d.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── Analytics Module ─────────────────────────────────────────────────────────
 function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: string }) {
   const [estimates, setEstimates] = useState<Estimate[]>([]);
   const [salesOrders, setSalesOrders] = useState<(SalesOrder & { project_name?: string | null })[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
-  const [report, setReport] = useState<"quote_so" | "projects">("quote_so");
+  const [report, setReport] = useState<"quote_so" | "projects" | "revenue" | "customers" | "ageing">("quote_so");
   const [search, setSearch] = useState("");
 
   useEffect(() => {
@@ -2625,11 +2641,57 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
   const maxSo = Math.max(1, ...projectRows.map(r => r.soValue));
   const noProjectName = salesOrders.length > 0 && salesOrders.every(so => !so.project_name);
 
+  // ── Report 3: Revenue trend (last 12 months, by invoice date) ──────────────
+  const monthMap = new Map<string, number>();
+  invoices.forEach(inv => {
+    if (!inv.date) return;
+    const m = inv.date.slice(0, 7);
+    monthMap.set(m, (monthMap.get(m) || 0) + (inv.total || 0));
+  });
+  const revenueBars = Array.from(monthMap.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .slice(-12)
+    .map(([m, v]) => ({ label: new Date(m + "-01").toLocaleDateString("en-IN", { month: "short" }), value: v, full: m }));
+  const revenueTotal = revenueBars.reduce((s, b) => s + b.value, 0);
+  const revenueAvg = revenueBars.length ? revenueTotal / revenueBars.length : 0;
+  const bestMonth = revenueBars.reduce((a, b) => (b.value > a.value ? b : a), { value: 0, full: "—" } as any);
+
+  // ── Report 4: Top customers (by invoiced value) ────────────────────────────
+  const custMap = new Map<string, { invoiced: number; received: number; count: number }>();
+  invoices.forEach(inv => {
+    const name = inv.customer_name || "—";
+    const cur = custMap.get(name) || { invoiced: 0, received: 0, count: 0 };
+    cur.invoiced += inv.total || 0;
+    cur.received += (inv.total || 0) - (inv.balance || 0);
+    cur.count += 1;
+    custMap.set(name, cur);
+  });
+  const topCustomers = Array.from(custMap.entries())
+    .map(([name, v]) => ({ name, ...v }))
+    .sort((a, b) => b.invoiced - a.invoiced).slice(0, 15);
+  const maxCust = Math.max(1, ...topCustomers.map(c => c.invoiced));
+
+  // ── Report 5: Receivables ageing (outstanding balance by overdue days) ─────
+  const buckets = [
+    { label: "Current", min: -Infinity, max: 0, color: "#10b981", value: 0 },
+    { label: "1–30 days", min: 1, max: 30, color: "#3b82f6", value: 0 },
+    { label: "31–60 days", min: 31, max: 60, color: "#f59e0b", value: 0 },
+    { label: "61–90 days", min: 61, max: 90, color: "#f97316", value: 0 },
+    { label: "90+ days", min: 91, max: Infinity, color: "#ef4444", value: 0 },
+  ];
+  invoices.forEach(inv => {
+    if ((inv.balance || 0) <= 0) return;
+    const days = daysDiff(inv.due_date || inv.date);
+    const b = buckets.find(b => days >= b.min && days <= b.max);
+    if (b) b.value += inv.balance || 0;
+  });
+  const totalOutstanding = buckets.reduce((s, b) => s + b.value, 0);
+
   return (
     <div className="space-y-5">
       {/* Report switch */}
-      <div className="flex gap-2">
-        {([["quote_so", "Quote → Sales Order"], ["projects", "Project Summary"]] as const).map(([k, label]) => (
+      <div className="flex gap-2 flex-wrap">
+        {([["quote_so", "Quote → Sales Order"], ["projects", "Project Summary"], ["revenue", "Revenue Trend"], ["customers", "Top Customers"], ["ageing", "Receivables Ageing"]] as const).map(([k, label]) => (
           <button key={k} onClick={() => setReport(k)}
             className={`text-sm px-4 py-2 rounded-lg border transition ${report === k ? "bg-black text-white border-black" : "border-zinc-200 text-zinc-600 hover:bg-zinc-50"}`}>
             {label}
@@ -2703,6 +2765,71 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
             ])} empty="No sales orders — sync from Zoho" />
         </div>
       )}
+
+      {report === "revenue" && (
+        <div className="space-y-5">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <Card label="Invoiced (last 12 mo)" value={inr(revenueTotal)} color="text-violet-600" />
+            <Card label="Monthly Average" value={inr(revenueAvg)} color="text-blue-600" />
+            <Card label="Best Month" value={inr(bestMonth.value)} sub={bestMonth.full !== "—" ? new Date(bestMonth.full + "-01").toLocaleDateString("en-IN", { month: "long", year: "numeric" }) : "—"} color="text-emerald-600" />
+          </div>
+          <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm">
+            <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">Monthly Invoiced Revenue</p>
+            {revenueBars.length ? <VBars data={revenueBars} color="#111" /> : <p className="text-zinc-400 text-sm py-10 text-center">No invoices to chart</p>}
+          </div>
+        </div>
+      )}
+
+      {report === "customers" && (
+        <div className="space-y-5">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <Card label="Customers" value={String(custMap.size)} />
+            <Card label="Top Customer" value={topCustomers[0]?.name || "—"} sub={topCustomers[0] ? inr(topCustomers[0].invoiced) : ""} color="text-violet-600" />
+            <Card label="Top 5 Share" value={`${custMap.size ? Math.round(topCustomers.slice(0,5).reduce((s,c)=>s+c.invoiced,0) / Array.from(custMap.values()).reduce((s,c)=>s+c.invoiced,0) * 100) : 0}%`} sub="of total invoiced" color="text-blue-600" />
+          </div>
+          <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm space-y-3">
+            <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1">Top Customers by Invoiced Value</p>
+            {topCustomers.map((c, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <span className="text-xs text-zinc-400 w-5 fin-num">{i + 1}</span>
+                <span className="text-sm text-zinc-700 w-52 truncate">{c.name}</span>
+                <div className="flex-1"><MiniBar value={c.invoiced} max={maxCust} color="#7c3aed" /></div>
+                <span className="text-sm font-semibold fin-num w-28 text-right">{inr(c.invoiced)}</span>
+              </div>
+            ))}
+            {!topCustomers.length && <p className="text-zinc-400 text-sm py-6 text-center">No invoices — sync from Zoho</p>}
+          </div>
+        </div>
+      )}
+
+      {report === "ageing" && (
+        <div className="space-y-5">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Card label="Total Outstanding" value={inr(totalOutstanding)} color="text-amber-600" />
+            <Card label="Overdue >90 days" value={inr(buckets[4].value)} color="text-red-600" />
+            <Card label="Current (not overdue)" value={inr(buckets[0].value)} color="text-emerald-600" />
+            <Card label="Open Invoices" value={String(invoices.filter(i => (i.balance || 0) > 0).length)} />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm">
+              <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-4">Outstanding by Age</p>
+              <Donut centerValue={inr(totalOutstanding)} centerLabel="outstanding"
+                data={buckets.filter(b => b.value > 0).map(b => ({ label: b.label, value: b.value, color: b.color }))} />
+            </div>
+            <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm space-y-3">
+              <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1">Ageing Breakdown</p>
+              {buckets.map((b, i) => (
+                <div key={i} className="flex items-center gap-3">
+                  <span className="w-3 h-3 rounded-sm shrink-0" style={{ background: b.color }} />
+                  <span className="text-sm text-zinc-600 w-28">{b.label}</span>
+                  <div className="flex-1"><MiniBar value={b.value} max={Math.max(1, ...buckets.map(x => x.value))} color={b.color} /></div>
+                  <span className="text-sm font-semibold fin-num w-28 text-right">{inr(b.value)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2712,7 +2839,7 @@ function ClientModule({ client, onBack }: { client: Client; onBack: () => void }
   const getHashModule = (): Module => {
     try {
       const m = window.location.hash.replace("#", "").split("|")[1];
-      if (m === "audit" || m === "compliance") return m;
+      if (m === "audit" || m === "compliance" || m === "analytics") return m;
     } catch {}
     return "accounting";
   };

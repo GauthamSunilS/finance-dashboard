@@ -28,6 +28,21 @@ async function getAccessToken(orgId: string): Promise<string> {
   return d.access_token;
 }
 
+// ─── Concurrency-limited batch fetcher ───────────────────────────────────────
+async function fetchDetails<T>(
+  ids: string[], fetchOne: (id: string) => Promise<T>, concurrency = 15
+): Promise<T[]> {
+  const results: T[] = [];
+  for (let i = 0; i < ids.length; i += concurrency) {
+    const batch = ids.slice(i, i + concurrency);
+    const settled = await Promise.allSettled(batch.map(fetchOne));
+    for (const r of settled) {
+      if (r.status === "fulfilled") results.push(r.value);
+    }
+  }
+  return results;
+}
+
 // ─── Paginated Zoho fetcher ────────────────────────────────────────────────────
 async function fetchAll(token: string, orgId: string, endpoint: string, listKey: string): Promise<any[]> {
   const results: any[] = [];
@@ -442,7 +457,18 @@ serve(async (req) => {
     const items          = itemsRaw.map(i      => mapItem(i, orgId));
     const estimates      = estimatesRaw.map(e  => mapEstimate(e, orgId));
     const salesOrders    = salesOrdersRaw.map(s => mapSalesOrder(s, orgId));
-    const invoices       = invoicesRaw.map(inv => mapInvoice(inv, orgId));
+    // Fetch full invoice details in batches of 15 to get correct tax_total
+    const invoices = await fetchDetails(
+      invoicesRaw.map((inv: any) => inv.invoice_id),
+      async (id) => {
+        const r = await fetch(
+          `https://www.zohoapis.in/books/v3/invoices/${id}?organization_id=${orgId}`,
+          { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
+        );
+        const d = await r.json();
+        return mapInvoice(d.invoice || invoicesRaw.find((i: any) => i.invoice_id === id), orgId);
+      }
+    );
     const salesReceipts  = salesReceiptsRaw.map(r => mapSalesReceipt(r, orgId));
     const custPayments   = custPaymentsRaw.map(p => mapCustomerPayment(p, orgId));
     const creditNotes    = creditNotesRaw.map(c => mapCreditNote(c, orgId));

@@ -7,19 +7,24 @@ const corsHeaders = {
 };
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
-async function getAccessToken(): Promise<string> {
+// Account A = Creatomy LLP + The Design Room (Gautham's Zoho)
+const ACCOUNT_A_ORGS = ["60020061985", "60031248960"];
+// Account B = Zero X Infinity (peer's Zoho)
+const ACCOUNT_B_ORGS = ["60027611420"];
+
+async function getAccessToken(orgId: string): Promise<string> {
+  const isAccountA = ACCOUNT_A_ORGS.includes(orgId);
+  const client_id     = isAccountA ? "1000.9ESMXKQDYSF2DQHEP8B4B4NINJXV2W" : Deno.env.get("ZOHO_CLIENT_ID")!;
+  const client_secret = isAccountA ? Deno.env.get("ZOHO_CLIENT_SECRET_A")!   : Deno.env.get("ZOHO_CLIENT_SECRET")!;
+  const refresh_token = isAccountA ? Deno.env.get("ZOHO_REFRESH_TOKEN_A")!   : Deno.env.get("ZOHO_REFRESH_TOKEN")!;
+
   const res = await fetch("https://accounts.zoho.in/oauth/v2/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id:     Deno.env.get("ZOHO_CLIENT_ID")!,
-      client_secret: Deno.env.get("ZOHO_CLIENT_SECRET")!,
-      refresh_token: Deno.env.get("ZOHO_REFRESH_TOKEN")!,
-      grant_type:    "refresh_token",
-    }),
+    body: new URLSearchParams({ client_id, client_secret, refresh_token, grant_type: "refresh_token" }),
   });
   const d = await res.json();
-  if (!d.access_token) throw new Error(`Token refresh failed: ${JSON.stringify(d)}`);
+  if (!d.access_token) throw new Error(`Token refresh failed for org ${orgId}: ${JSON.stringify(d)}`);
   return d.access_token;
 }
 
@@ -396,14 +401,17 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const token = await getAccessToken();
-    const orgIds = Deno.env.get("ZOHO_ORG_IDS")!.split(",").map(s => s.trim());
+    const body = await req.json().catch(() => ({}));
+    const orgId: string = body.org_id;
+    if (!orgId) throw new Error("org_id is required in request body");
+
+    const token = await getAccessToken(orgId);
     const SUPABASE_URL = Deno.env.get("APP_SUPABASE_URL")!;
     const KEY = Deno.env.get("APP_SERVICE_ROLE_KEY")!;
 
     const summary: Record<string, number> = {};
 
-    for (const orgId of orgIds) {
+    {
       console.log(`Syncing org: ${orgId}`);
 
       // ── MASTER DATA ──────────────────────────────────────────────────────────
@@ -516,7 +524,7 @@ serve(async (req) => {
     }
 
     const total = Object.values(summary).reduce((a, b) => a + b, 0);
-    console.log("Sync complete:", summary);
+    console.log(`Sync complete for org ${orgId}:`, summary);
 
     return new Response(
       JSON.stringify({ success: true, total_records: total, breakdown: summary }),

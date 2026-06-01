@@ -61,24 +61,31 @@ function fdate(d: string | null | undefined) {
 }
 function daysDiff(d: string) { return Math.floor((new Date().getTime() - new Date(d).getTime()) / 86400000); }
 
+// Status dot colors (text color drives the leading • dot)
 const SC: Record<string, string> = {
-  paid: "bg-emerald-100 text-emerald-700", sent: "bg-blue-100 text-blue-700",
-  draft: "bg-zinc-100 text-zinc-500", overdue: "bg-red-100 text-red-600",
-  void: "bg-orange-100 text-orange-600", accepted: "bg-emerald-100 text-emerald-700",
-  declined: "bg-red-100 text-red-600", confirmed: "bg-blue-100 text-blue-700",
-  open: "bg-blue-100 text-blue-700", closed: "bg-zinc-100 text-zinc-500",
-  billed: "bg-purple-100 text-purple-700", partial: "bg-amber-100 text-amber-700",
-  pending: "bg-amber-100 text-amber-700", nonbillable: "bg-zinc-100 text-zinc-400",
+  paid: "text-emerald-600", sent: "text-blue-600",
+  draft: "text-zinc-400", overdue: "text-red-500",
+  void: "text-orange-500", accepted: "text-emerald-600",
+  declined: "text-red-500", confirmed: "text-blue-600",
+  open: "text-blue-600", closed: "text-zinc-400",
+  billed: "text-purple-600", partial: "text-amber-600",
+  pending: "text-amber-600", nonbillable: "text-zinc-400",
+  approved: "text-emerald-600",
 };
 function Badge({ s }: { s: string }) {
-  return <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${SC[s?.toLowerCase()] || "bg-zinc-100 text-zinc-400"}`}>{s || "—"}</span>;
+  const color = SC[s?.toLowerCase()] || "text-zinc-400";
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-medium capitalize ${color}`}>
+      <span className="text-[10px] leading-none">●</span>{s || "—"}
+    </span>
+  );
 }
 function Card({ label, value, sub, color = "text-zinc-900", onClick, active }: { label: string; value: string; sub?: string; color?: string; onClick?: () => void; active?: boolean }) {
   return (
-    <div onClick={onClick} className={`bg-white border rounded-xl p-4 shadow-sm transition-all ${onClick ? "cursor-pointer hover:shadow-md" : ""} ${active ? "border-black ring-2 ring-black ring-offset-1" : "border-zinc-200"}`}>
-      <p className="text-xs text-zinc-400 uppercase tracking-wide mb-1">{label}</p>
-      <p className={`text-xl font-bold ${color}`}>{value}</p>
-      {sub && <p className="text-xs text-zinc-400 mt-0.5">{sub}</p>}
+    <div onClick={onClick} className={`border rounded-xl p-4 shadow-sm transition-all ${active ? "bg-black border-black" : "bg-white border-zinc-200"} ${onClick ? "cursor-pointer hover:shadow-md" : ""}`}>
+      <p className={`text-xs uppercase tracking-wider mb-1 ${active ? "text-zinc-400" : "text-zinc-400"}`}>{label}</p>
+      <p className={`text-xl font-bold fin-num ${active ? "text-white" : color}`}>{value}</p>
+      {sub && <p className={`text-xs mt-0.5 fin-num ${active ? "text-zinc-500" : "text-zinc-400"}`}>{sub}</p>}
       {active && <p className="text-xs text-zinc-500 mt-1 font-medium">✓ Filtered</p>}
     </div>
   );
@@ -87,10 +94,10 @@ function Table({ cols, rows, empty = "No data" }: { cols: string[]; rows: React.
   return (
     <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden shadow-sm">
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full text-sm fin-num">
           <thead>
             <tr className="border-b border-zinc-200 bg-zinc-50">
-              {cols.map((c, i) => <th key={i} className={`px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide ${i === cols.length - 1 ? "text-right" : "text-left"}`}>{c}</th>)}
+              {cols.map((c, i) => <th key={i} className={`px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider ${i === cols.length - 1 ? "text-right" : "text-left"}`}>{c}</th>)}
             </tr>
           </thead>
           <tbody>

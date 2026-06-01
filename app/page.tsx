@@ -2605,16 +2605,22 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
 
   if (loading) return <div className="text-center py-20 text-zinc-400">Loading analytics…</div>;
 
+  // Void SOs are cancelled — exclude them from every analytic so totals/
+  // conversion aren't inflated by orders that no longer exist.
+  const activeSalesOrders = salesOrders.filter(so => (so.status || "").toLowerCase() !== "void");
+  const voidSOs = salesOrders.filter(so => (so.status || "").toLowerCase() === "void");
+  const voidVal = voidSOs.reduce((s, so) => s + (so.total || 0), 0);
+
   // FY/Month filtered datasets (by record date) — drive every report
-  const allDates = [...estimates, ...salesOrders, ...invoices].map((x: any) => x.date || "");
+  const allDates = [...estimates, ...activeSalesOrders, ...invoices].map((x: any) => x.date || "");
   const fEstimates = filterByFYMonth(estimates, fy, month);
-  const fSalesOrders = filterByFYMonth(salesOrders, fy, month);
+  const fSalesOrders = filterByFYMonth(activeSalesOrders, fy, month);
   const fInvoices = filterByFYMonth(invoices, fy, month);
 
   // ── Report 1: Quote vs SO ──────────────────────────────────────────────────
-  // Conversion detection uses ALL sales orders (a quote may convert in any month)
+  // Conversion detection uses all ACTIVE sales orders (a quote may convert in any month)
   const soByQuote = new Map<string, SalesOrder>();
-  salesOrders.forEach(so => { if (so.reference_number) soByQuote.set(so.reference_number.trim(), so); });
+  activeSalesOrders.forEach(so => { if (so.reference_number) soByQuote.set(so.reference_number.trim(), so); });
   const quoteRows = fEstimates.map(q => {
     const so = soByQuote.get((q.estimate_number || "").trim());
     return { quote: q, so, converted: !!so };
@@ -2629,9 +2635,10 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
   const estNumbers = new Set(estimates.map(e => (e.estimate_number || "").trim()));
   const soFromQuotesVal = fSalesOrders.filter(so => so.reference_number && estNumbers.has(so.reference_number.trim())).reduce((s, so) => s + (so.total || 0), 0);
   const soDirectVal = soTotalVal - soFromQuotesVal;
-  // Quote table filtered by the clickable status filter
+  // Quote table filtered by the clickable status filter + search
   const visibleQuoteRows = quoteRows
     .filter(r => quoteView === "all" || (quoteView === "converted" ? r.converted : !r.converted))
+    .filter(r => !search || `${r.quote.estimate_number} ${r.quote.customer_name} ${r.so?.salesorder_number || ""}`.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => (b.quote.total || 0) - (a.quote.total || 0));
 
   // ── Report 2: Project summary ──────────────────────────────────────────────
@@ -2765,6 +2772,7 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
           </div>
           <div className="text-xs text-zinc-400 bg-zinc-50 border border-zinc-200 rounded-lg px-3 py-2">
             Quote-side vs SO-side differ by design: converted quotes were worth <b className="text-zinc-600">{inr(convertedVal)}</b> at quote stage but became SOs worth <b className="text-zinc-600">{inr(soFromQuotesVal)}</b> (revisions/add-ons), plus <b className="text-zinc-600">{inr(soDirectVal)}</b> of SOs raised without a quote.
+            {voidSOs.length > 0 && <> {voidSOs.length} void SO{voidSOs.length > 1 ? "s" : ""} ({inr(voidVal)}) are excluded from all figures.</>}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm">
@@ -2783,6 +2791,12 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
                   { label: "Not converted", value: Math.max(0, totalQuoteVal - convertedVal), color: "#e4e4e7" },
                 ]} />
             </div>
+          </div>
+          <div className="relative">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search quote #, customer, SO…"
+              className="w-full pl-9 pr-4 py-2.5 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-black transition" />
+            {search && <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-black text-lg">×</button>}
           </div>
           <div className="flex items-center justify-between">
             <p className="text-xs text-zinc-400">
@@ -2809,7 +2823,7 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
             </div>
           )}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Card label="Projects" value={String(projCounts.all)} sub={`${salesOrders.length} SOs`} />
+            <Card label="Projects" value={String(projCounts.all)} sub={`${activeSalesOrders.length} active SOs`} />
             <Card label="Total Value" value={inr(totSoVal)} color="text-violet-600" />
             <Card label="Invoiced" value={inr(totInvoiced)} sub={`${totSoVal ? Math.round(totInvoiced / totSoVal * 100) : 0}% of value`} color="text-blue-600" />
             <Card label="Received" value={inr(totReceived)} sub={`${totInvoiced ? Math.round(totReceived / totInvoiced * 100) : 0}% of invoiced`} color="text-emerald-600" />

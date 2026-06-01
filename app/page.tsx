@@ -2626,7 +2626,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
             <p className="text-xs text-zinc-400">Finance Dashboard · {today}</p>
           </div>
         </div>
-        <button onClick={onLogout} className="text-xs px-3 py-1.5 rounded border border-zinc-300 hover:bg-zinc-100 text-zinc-600 transition">Sign Out</button>
+        <button onClick={async () => { await supabase.auth.signOut(); onLogout(); }} className="text-xs px-3 py-1.5 rounded border border-zinc-300 hover:bg-zinc-100 text-zinc-600 transition">Sign Out</button>
       </div>
       <div className="max-w-3xl mx-auto px-8 py-8">
         <div className="flex items-center justify-between mb-4">
@@ -2681,7 +2681,7 @@ function HomeInner() {
     return () => l.subscription.unsubscribe();
   }, []);
   if (session === null) return <div className="min-h-screen bg-white flex items-center justify-center"><p className="text-zinc-400 text-sm animate-pulse">Loading...</p></div>;
-  return session ? <Dashboard onLogout={() => setSession(false)} /> : <LoginScreen onLogin={() => setSession(true)} />;
+  return session ? <Dashboard onLogout={() => setSession(false)} /> : <LoginScreen onLogin={() => supabase.auth.getSession().then(({ data }) => setSession(!!data.session))} />;
 }
 
 export default function Home() {

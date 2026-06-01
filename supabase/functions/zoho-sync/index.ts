@@ -451,22 +451,7 @@ serve(async (req) => {
       summary["credit_notes"] = (summary["credit_notes"] || 0) + creditNotes.length;
 
       // ── EXPENSE MODULE ───────────────────────────────────────────────────────
-      // Fetch expense list first, then get full details for each (for GST/tax breakdown)
-      const expenseList = await fetchAll(token, orgId, "expenses", "expenses");
-      const expenses: any[] = [];
-      for (const exp of expenseList) {
-        try {
-          const detailRes = await fetch(
-            `https://www.zohoapis.in/books/v3/expenses/${exp.expense_id}?organization_id=${orgId}`,
-            { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
-          );
-          const detailData = await detailRes.json();
-          const detail = detailData.expense || exp;
-          expenses.push(mapExpense(detail, orgId));
-        } catch {
-          expenses.push(mapExpense(exp, orgId));
-        }
-      }
+      const expenses = (await fetchAll(token, orgId, "expenses", "expenses")).map(e => mapExpense(e, orgId));
       await upsert(SUPABASE_URL, KEY, "expenses", expenses);
       summary["expenses"] = (summary["expenses"] || 0) + expenses.length;
 
@@ -490,21 +475,7 @@ serve(async (req) => {
       summary["vendor_credits"] = (summary["vendor_credits"] || 0) + vendorCredits.length;
 
       // ── ACCOUNTING / JOURNALS ────────────────────────────────────────────────
-      // Fetch journal details to get line_items (ledger names)
-      const journalList = await fetchAll(token, orgId, "journals", "journals");
-      const journals: any[] = [];
-      for (const jrn of journalList) {
-        try {
-          const res = await fetch(
-            `https://www.zohoapis.in/books/v3/journals/${jrn.journal_id}?organization_id=${orgId}`,
-            { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
-          );
-          const d = await res.json();
-          journals.push(mapJournal(d.journal || jrn, orgId));
-        } catch {
-          journals.push(mapJournal(jrn, orgId));
-        }
-      }
+      const journals = (await fetchAll(token, orgId, "journals", "journals")).map(j => mapJournal(j, orgId));
       await upsert(SUPABASE_URL, KEY, "journals", journals);
       summary["journals"] = (summary["journals"] || 0) + journals.length;
 

@@ -2628,6 +2628,10 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
   const [month, setMonth] = useState("All");
   const [quoteView, setQuoteView] = useState<"all" | "converted" | "pending" | "void">("all");
   const [projView, setProjView] = useState<"all" | "not_invoiced" | "in_progress" | "completed">("all");
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
+  const toggleProject = (key: string) => setExpandedProjects(prev => {
+    const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next;
+  });
 
   useEffect(() => {
     setLoading(true);
@@ -2699,13 +2703,13 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
     invBySo.set(soid, cur);
   });
   // Group SOs by Project Name (a project can span multiple SOs)
-  type Proj = { key: string; project: string; customers: Set<string>; taxable: number; gst: number; total: number; invoiced: number; received: number; soCount: number };
+  type Proj = { key: string; project: string; customers: Set<string>; taxable: number; gst: number; total: number; invoiced: number; received: number; soCount: number; sos: SalesOrder[] };
   const projMap = new Map<string, Proj>();
   fSalesOrders.forEach(so => {
     const pname = (so.project_name || "").trim();
     const key = pname || `__so_${so.id}`; // SOs without a project name stay as their own row
     const agg = invBySo.get(so.id) || { invoiced: 0, received: 0 };
-    const e = projMap.get(key) || { key, project: pname || "—", customers: new Set<string>(), taxable: 0, gst: 0, total: 0, invoiced: 0, received: 0, soCount: 0 };
+    const e = projMap.get(key) || { key, project: pname || "—", customers: new Set<string>(), taxable: 0, gst: 0, total: 0, invoiced: 0, received: 0, soCount: 0, sos: [] };
     if (so.customer_name) e.customers.add(so.customer_name);
     e.taxable += so.sub_total || 0;
     e.gst += so.tax_total || 0;
@@ -2713,6 +2717,7 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
     e.invoiced += agg.invoiced;
     e.received += agg.received;
     e.soCount += 1;
+    e.sos.push(so);
     projMap.set(key, e);
   });
   const projStatus = (p: Proj): "not_invoiced" | "in_progress" | "completed" =>
@@ -2899,18 +2904,60 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
               columns={["Project", "Client", "SOs", "Taxable", "GST", "Total Value", "Invoiced", "Received"]}
               rows={projectRows.map(r => [r.project, r.customer, r.soCount, Math.round(r.taxable), Math.round(r.gst), Math.round(r.total), Math.round(r.invoiced), Math.round(r.received)])} />
           </div>
-          <Table cols={["Project", "Client", "SOs", "Taxable", "GST", "Total Value", "Invoiced", "Received", "Progress"]}
-            rows={projectRows.map(r => [
-              <span className="font-medium text-zinc-800">{r.project}</span>,
-              <span className="text-zinc-600">{r.customer}</span>,
-              <span className="text-zinc-400 fin-num">{r.soCount}</span>,
-              <span className="text-zinc-600">{inr(r.taxable)}</span>,
-              r.gst > 0 ? <span className="text-blue-600">{inr(r.gst)}</span> : <span className="text-zinc-300">—</span>,
-              <span className="font-semibold">{inr(r.total)}</span>,
-              <span className="text-blue-600">{r.invoiced > 0 ? inr(r.invoiced) : "—"}</span>,
-              <span className="text-emerald-600">{r.received > 0 ? inr(r.received) : "—"}</span>,
-              <div className="w-24"><MiniBar value={r.received} max={r.total} color="#10b981" /></div>,
-            ])} empty="No projects for this filter" />
+          <p className="text-xs text-zinc-400">Click a project to expand its sales orders.</p>
+          <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden shadow-sm">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm fin-num">
+                <thead>
+                  <tr className="border-b border-zinc-200 bg-zinc-50 text-xs font-semibold text-zinc-500 uppercase tracking-wider">
+                    {["Project", "Client", "SOs", "Taxable", "GST", "Total Value", "Invoiced", "Received", "Progress"].map((c, i) => (
+                      <th key={i} className="px-4 py-3 text-left">{c}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {projectRows.length === 0
+                    ? <tr><td colSpan={9} className="text-center py-10 text-zinc-400 text-sm">No projects for this filter</td></tr>
+                    : projectRows.map(r => {
+                      const open = expandedProjects.has(r.key);
+                      return (
+                        <React.Fragment key={r.key}>
+                          <tr onClick={() => toggleProject(r.key)} className="border-b border-zinc-100 hover:bg-zinc-50 cursor-pointer">
+                            <td className="px-4 py-3 font-medium text-zinc-800">
+                              <span className="inline-block w-4 text-zinc-400">{r.soCount > 1 ? (open ? "▾" : "▸") : ""}</span>{r.project}
+                            </td>
+                            <td className="px-4 py-3 text-zinc-600">{r.customer}</td>
+                            <td className="px-4 py-3 text-zinc-400">{r.soCount}</td>
+                            <td className="px-4 py-3 text-zinc-600">{inr(r.taxable)}</td>
+                            <td className="px-4 py-3 text-blue-600">{r.gst > 0 ? inr(r.gst) : "—"}</td>
+                            <td className="px-4 py-3 font-semibold">{inr(r.total)}</td>
+                            <td className="px-4 py-3 text-blue-600">{r.invoiced > 0 ? inr(r.invoiced) : "—"}</td>
+                            <td className="px-4 py-3 text-emerald-600">{r.received > 0 ? inr(r.received) : "—"}</td>
+                            <td className="px-4 py-3"><div className="w-24"><MiniBar value={r.received} max={r.total} color="#10b981" /></div></td>
+                          </tr>
+                          {open && r.sos.map(so => {
+                            const agg = invBySo.get(so.id) || { invoiced: 0, received: 0 };
+                            return (
+                              <tr key={so.id} className="border-b border-zinc-100 bg-zinc-50/60 text-xs">
+                                <td className="px-4 py-2 pl-10 font-mono text-zinc-500">{so.salesorder_number}</td>
+                                <td className="px-4 py-2 text-zinc-400">{fdate(so.date)}</td>
+                                <td className="px-4 py-2"><Badge s={so.status} /></td>
+                                <td className="px-4 py-2 text-zinc-500">{inr(so.sub_total || 0)}</td>
+                                <td className="px-4 py-2 text-blue-500">{(so.tax_total || 0) > 0 ? inr(so.tax_total) : "—"}</td>
+                                <td className="px-4 py-2 font-medium text-zinc-600">{inr(so.total || 0)}</td>
+                                <td className="px-4 py-2 text-blue-500">{agg.invoiced > 0 ? inr(agg.invoiced) : "—"}</td>
+                                <td className="px-4 py-2 text-emerald-500">{agg.received > 0 ? inr(agg.received) : "—"}</td>
+                                <td className="px-4 py-2"><div className="w-24"><MiniBar value={agg.received} max={so.total || 1} color="#34d399" /></div></td>
+                              </tr>
+                            );
+                          })}
+                        </React.Fragment>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
 

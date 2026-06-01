@@ -2586,6 +2586,9 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
   const [loading, setLoading] = useState(true);
   const [report, setReport] = useState<"quote_so" | "projects" | "revenue" | "customers" | "ageing">("quote_so");
   const [search, setSearch] = useState("");
+  const [fy, setFy] = useState("All");
+  const [month, setMonth] = useState("All");
+  const [quoteView, setQuoteView] = useState<"all" | "converted" | "pending">("all");
 
   useEffect(() => {
     setLoading(true);
@@ -2601,23 +2604,34 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
 
   if (loading) return <div className="text-center py-20 text-zinc-400">Loading analytics…</div>;
 
+  // FY/Month filtered datasets (by record date) — drive every report
+  const allDates = [...estimates, ...salesOrders, ...invoices].map((x: any) => x.date || "");
+  const fEstimates = filterByFYMonth(estimates, fy, month);
+  const fSalesOrders = filterByFYMonth(salesOrders, fy, month);
+  const fInvoices = filterByFYMonth(invoices, fy, month);
+
   // ── Report 1: Quote vs SO ──────────────────────────────────────────────────
+  // Conversion detection uses ALL sales orders (a quote may convert in any month)
   const soByQuote = new Map<string, SalesOrder>();
   salesOrders.forEach(so => { if (so.reference_number) soByQuote.set(so.reference_number.trim(), so); });
-  const quoteRows = estimates.map(q => {
+  const quoteRows = fEstimates.map(q => {
     const so = soByQuote.get((q.estimate_number || "").trim());
     return { quote: q, so, converted: !!so };
   });
-  const totalQuoteVal = estimates.reduce((s, q) => s + (q.total || 0), 0);
+  const totalQuoteVal = fEstimates.reduce((s, q) => s + (q.total || 0), 0);
   const convertedQuotes = quoteRows.filter(r => r.converted);
   const convertedVal = convertedQuotes.reduce((s, r) => s + (r.quote.total || 0), 0);
-  const soTotalVal = salesOrders.reduce((s, so) => s + (so.total || 0), 0);
-  const convRateCount = estimates.length ? Math.round((convertedQuotes.length / estimates.length) * 100) : 0;
+  const soTotalVal = fSalesOrders.reduce((s, so) => s + (so.total || 0), 0);
+  const convRateCount = fEstimates.length ? Math.round((convertedQuotes.length / fEstimates.length) * 100) : 0;
   const convRateValue = totalQuoteVal ? Math.round((convertedVal / totalQuoteVal) * 100) : 0;
   // SO-side split so the SO total reconciles with the quote-side donut
   const estNumbers = new Set(estimates.map(e => (e.estimate_number || "").trim()));
-  const soFromQuotesVal = salesOrders.filter(so => so.reference_number && estNumbers.has(so.reference_number.trim())).reduce((s, so) => s + (so.total || 0), 0);
+  const soFromQuotesVal = fSalesOrders.filter(so => so.reference_number && estNumbers.has(so.reference_number.trim())).reduce((s, so) => s + (so.total || 0), 0);
   const soDirectVal = soTotalVal - soFromQuotesVal;
+  // Quote table filtered by the clickable status filter
+  const visibleQuoteRows = quoteRows
+    .filter(r => quoteView === "all" || (quoteView === "converted" ? r.converted : !r.converted))
+    .sort((a, b) => (b.quote.total || 0) - (a.quote.total || 0));
 
   // ── Report 2: Project summary ──────────────────────────────────────────────
   const invBySo = new Map<string, { invoiced: number; received: number }>();
@@ -2629,7 +2643,7 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
     cur.received += (inv.total || 0) - (inv.balance || 0);
     invBySo.set(soid, cur);
   });
-  const projectRows = salesOrders.map(so => {
+  const projectRows = fSalesOrders.map(so => {
     const agg = invBySo.get(so.id) || { invoiced: 0, received: 0 };
     return {
       id: so.id, customer: so.customer_name, project: so.project_name || "—",
@@ -2648,7 +2662,7 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
 
   // ── Report 3: Revenue trend (last 12 months, by invoice date) ──────────────
   const monthMap = new Map<string, number>();
-  invoices.forEach(inv => {
+  fInvoices.forEach(inv => {
     if (!inv.date) return;
     const m = inv.date.slice(0, 7);
     monthMap.set(m, (monthMap.get(m) || 0) + (inv.total || 0));
@@ -2663,7 +2677,7 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
 
   // ── Report 4: Top customers (by invoiced value) ────────────────────────────
   const custMap = new Map<string, { invoiced: number; received: number; count: number }>();
-  invoices.forEach(inv => {
+  fInvoices.forEach(inv => {
     const name = inv.customer_name || "—";
     const cur = custMap.get(name) || { invoiced: 0, received: 0, count: 0 };
     cur.invoiced += inv.total || 0;
@@ -2684,7 +2698,7 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
     { label: "61–90 days", min: 61, max: 90, color: "#f97316", value: 0 },
     { label: "90+ days", min: 91, max: Infinity, color: "#ef4444", value: 0 },
   ];
-  invoices.forEach(inv => {
+  fInvoices.forEach(inv => {
     if ((inv.balance || 0) <= 0) return;
     const days = daysDiff(inv.due_date || inv.date);
     const b = buckets.find(b => days >= b.min && days <= b.max);
@@ -2704,12 +2718,25 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
         ))}
       </div>
 
+      {/* FY / Month filter — applies to every report */}
+      <div className="flex items-center justify-between gap-3 flex-wrap border-y border-zinc-100 py-2">
+        <FYMonthFilter dates={allDates} fy={fy} month={month} onFY={setFy} onMonth={setMonth} />
+        {(fy !== "All" || month !== "All") && (
+          <span className="text-xs text-zinc-400">
+            Showing {fy !== "All" ? fy : "all FYs"}{month !== "All" ? ` · ${new Date(month + "-01").toLocaleDateString("en-IN", { month: "long", year: "numeric" })}` : ""}
+          </span>
+        )}
+      </div>
+
       {report === "quote_so" && (
         <div className="space-y-5">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Card label="Total Quotes" value={String(estimates.length)} sub={`${inr(totalQuoteVal)} quoted`} />
-            <Card label="Converted to SO" value={String(convertedQuotes.length)} sub={`${inr(convertedVal)} quote value`} color="text-emerald-600" />
-            <Card label="Conversion Rate" value={`${convRateCount}%`} sub={`${convRateValue}% by value`} color="text-blue-600" />
+            <Card label="Total Quotes" value={String(fEstimates.length)} sub={`${inr(totalQuoteVal)} quoted`}
+              onClick={() => setQuoteView("all")} active={quoteView === "all"} />
+            <Card label="Converted to SO" value={String(convertedQuotes.length)} sub={`${inr(convertedVal)} quote value`} color="text-emerald-600"
+              onClick={() => setQuoteView("converted")} active={quoteView === "converted"} />
+            <Card label="Pending" value={String(fEstimates.length - convertedQuotes.length)} sub={`${convRateCount}% converted`} color="text-amber-600"
+              onClick={() => setQuoteView("pending")} active={quoteView === "pending"} />
             <Card label="Total SO Value" value={inr(soTotalVal)} sub={soDirectVal > 0 ? `incl. ${inr(soDirectVal)} direct (no quote)` : "all sales orders"} color="text-violet-600" />
           </div>
           <div className="text-xs text-zinc-400 bg-zinc-50 border border-zinc-200 rounded-lg px-3 py-2">
@@ -2721,7 +2748,7 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
               <Donut centerValue={`${convRateCount}%`} centerLabel="converted"
                 data={[
                   { label: "Converted", value: convertedQuotes.length, color: "#10b981" },
-                  { label: "Pending", value: estimates.length - convertedQuotes.length, color: "#e4e4e7" },
+                  { label: "Pending", value: fEstimates.length - convertedQuotes.length, color: "#e4e4e7" },
                 ]} />
             </div>
             <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm">
@@ -2733,14 +2760,20 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
                 ]} />
             </div>
           </div>
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-zinc-400">
+              Showing <b className="text-zinc-600">{quoteView === "all" ? "all quotes" : quoteView === "converted" ? "converted quotes" : "pending quotes"}</b> ({visibleQuoteRows.length})
+            </p>
+            {quoteView !== "all" && <button onClick={() => setQuoteView("all")} className="text-xs text-zinc-400 hover:text-black border border-zinc-200 rounded px-2 py-1">Clear filter</button>}
+          </div>
           <Table cols={["Quote #", "Customer", "Quote Value", "Status", "Sales Order"]}
-            rows={quoteRows.sort((a, b) => (b.quote.total || 0) - (a.quote.total || 0)).map(r => [
+            rows={visibleQuoteRows.map(r => [
               <span className="font-mono text-xs text-zinc-500">{r.quote.estimate_number}</span>,
               r.quote.customer_name,
               <span className="font-semibold">{fmt(r.quote.total, r.quote.currency_code)}</span>,
               r.converted ? <Badge s="confirmed" /> : <Badge s="pending" />,
               r.so ? <span className="font-mono text-xs text-emerald-600">{r.so.salesorder_number}</span> : <span className="text-zinc-300">—</span>,
-            ])} empty="No quotes — sync from Zoho" />
+            ])} empty="No quotes for this filter" />
         </div>
       )}
 

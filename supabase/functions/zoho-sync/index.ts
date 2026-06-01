@@ -467,7 +467,8 @@ serve(async (req) => {
         );
         const d = await r.json();
         return mapInvoice(d.invoice || invoicesRaw.find((i: any) => i.invoice_id === id), orgId);
-      }
+      },
+      50
     );
     const salesReceipts  = salesReceiptsRaw.map(r => mapSalesReceipt(r, orgId));
     const custPayments   = custPaymentsRaw.map(p => mapCustomerPayment(p, orgId));

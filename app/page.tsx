@@ -2578,6 +2578,44 @@ function VBars({ data, color = "#111" }: { data: { label: string; value: number 
   );
 }
 
+// ─── Export helpers (CSV + print-to-PDF, dependency-free) ─────────────────────
+function downloadCSV(filename: string, columns: string[], rows: (string | number)[][]) {
+  const esc = (v: any) => { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const csv = [columns.map(esc).join(","), ...rows.map(r => r.map(esc).join(","))].join("\n");
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = `${filename}.csv`; a.click();
+  URL.revokeObjectURL(url);
+}
+function printReport(title: string, columns: string[], rows: (string | number)[][]) {
+  const w = window.open("", "_blank"); if (!w) return;
+  const esc = (v: any) => String(v ?? "").replace(/</g, "&lt;");
+  const th = columns.map(c => `<th>${esc(c)}</th>`).join("");
+  const tr = rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join("")}</tr>`).join("");
+  w.document.write(`<html><head><title>${esc(title)}</title><style>
+    body{font-family:Arial,Helvetica,sans-serif;padding:28px;color:#111}
+    h1{font-size:16px;margin:0 0 4px} p.meta{font-size:11px;color:#777;margin:0 0 16px}
+    table{width:100%;border-collapse:collapse;font-size:11px}
+    th,td{border:1px solid #e4e4e7;padding:6px 8px;text-align:left}
+    th{background:#f4f4f5;text-transform:uppercase;font-size:9px;color:#555;letter-spacing:.04em}
+    tbody tr:nth-child(even){background:#fafafa}
+  </style></head><body><h1>${esc(title)}</h1>
+  <p class="meta">Generated ${new Date().toLocaleString("en-IN")}</p>
+  <table><thead><tr>${th}</tr></thead><tbody>${tr}</tbody></table>
+  <script>window.onload=function(){window.print()}</script></body></html>`);
+  w.document.close();
+}
+function ExportButtons({ filename, title, columns, rows }: { filename: string; title: string; columns: string[]; rows: (string | number)[][] }) {
+  return (
+    <div className="flex gap-2">
+      <button onClick={() => downloadCSV(filename, columns, rows)} disabled={!rows.length}
+        className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 text-zinc-600 hover:bg-zinc-50 transition disabled:opacity-40">⬇ CSV</button>
+      <button onClick={() => printReport(title, columns, rows)} disabled={!rows.length}
+        className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 text-zinc-600 hover:bg-zinc-50 transition disabled:opacity-40">⬇ PDF</button>
+    </div>
+  );
+}
+
 // ─── Analytics Module ─────────────────────────────────────────────────────────
 function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: string }) {
   const [estimates, setEstimates] = useState<Estimate[]>([]);
@@ -2588,7 +2626,7 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
   const [search, setSearch] = useState("");
   const [fy, setFy] = useState("All");
   const [month, setMonth] = useState("All");
-  const [quoteView, setQuoteView] = useState<"all" | "converted" | "pending">("all");
+  const [quoteView, setQuoteView] = useState<"all" | "converted" | "pending" | "void">("all");
   const [projView, setProjView] = useState<"all" | "not_invoiced" | "in_progress" | "completed">("all");
 
   useEffect(() => {
@@ -2618,15 +2656,24 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
   const fInvoices = filterByFYMonth(invoices, fy, month);
 
   // ── Report 1: Quote vs SO ──────────────────────────────────────────────────
-  // Conversion detection uses all ACTIVE sales orders (a quote may convert in any month)
-  const soByQuote = new Map<string, SalesOrder>();
-  activeSalesOrders.forEach(so => { if (so.reference_number) soByQuote.set(so.reference_number.trim(), so); });
+  // Match quotes to SOs. Prefer an active SO; if a quote only produced a void
+  // (cancelled) SO, surface it as a distinct "void" status.
+  const soActiveByQuote = new Map<string, SalesOrder>();
+  activeSalesOrders.forEach(so => { if (so.reference_number) soActiveByQuote.set(so.reference_number.trim(), so); });
+  const soVoidByQuote = new Map<string, SalesOrder>();
+  voidSOs.forEach(so => { if (so.reference_number) soVoidByQuote.set(so.reference_number.trim(), so); });
   const quoteRows = fEstimates.map(q => {
-    const so = soByQuote.get((q.estimate_number || "").trim());
-    return { quote: q, so, converted: !!so };
+    const key = (q.estimate_number || "").trim();
+    const activeSO = soActiveByQuote.get(key);
+    const voidSO = soVoidByQuote.get(key);
+    const so = activeSO || voidSO || null;
+    const status: "converted" | "void" | "pending" = activeSO ? "converted" : voidSO ? "void" : "pending";
+    return { quote: q, so, status, converted: !!activeSO };
   });
   const totalQuoteVal = fEstimates.reduce((s, q) => s + (q.total || 0), 0);
-  const convertedQuotes = quoteRows.filter(r => r.converted);
+  const convertedQuotes = quoteRows.filter(r => r.status === "converted");
+  const voidQuotes = quoteRows.filter(r => r.status === "void");
+  const pendingQuotes = quoteRows.filter(r => r.status === "pending");
   const convertedVal = convertedQuotes.reduce((s, r) => s + (r.quote.total || 0), 0);
   const soTotalVal = fSalesOrders.reduce((s, so) => s + (so.total || 0), 0);
   const convRateCount = fEstimates.length ? Math.round((convertedQuotes.length / fEstimates.length) * 100) : 0;
@@ -2637,7 +2684,7 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
   const soDirectVal = soTotalVal - soFromQuotesVal;
   // Quote table filtered by the clickable status filter + search
   const visibleQuoteRows = quoteRows
-    .filter(r => quoteView === "all" || (quoteView === "converted" ? r.converted : !r.converted))
+    .filter(r => quoteView === "all" || r.status === quoteView)
     .filter(r => !search || `${r.quote.estimate_number} ${r.quote.customer_name} ${r.so?.salesorder_number || ""}`.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => (b.quote.total || 0) - (a.quote.total || 0));
 
@@ -2766,7 +2813,7 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
               onClick={() => setQuoteView("all")} active={quoteView === "all"} />
             <Card label="Converted to SO" value={String(convertedQuotes.length)} sub={`${inr(convertedVal)} quote value`} color="text-emerald-600"
               onClick={() => setQuoteView("converted")} active={quoteView === "converted"} />
-            <Card label="Pending" value={String(fEstimates.length - convertedQuotes.length)} sub={`${convRateCount}% converted`} color="text-amber-600"
+            <Card label="Pending" value={String(pendingQuotes.length)} sub={voidQuotes.length ? `${voidQuotes.length} went void` : `${convRateCount}% converted`} color="text-amber-600"
               onClick={() => setQuoteView("pending")} active={quoteView === "pending"} />
             <Card label="Total SO Value" value={inr(soTotalVal)} sub={soDirectVal > 0 ? `incl. ${inr(soDirectVal)} direct (no quote)` : "all sales orders"} color="text-violet-600" />
           </div>
@@ -2792,25 +2839,33 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
                 ]} />
             </div>
           </div>
-          <div className="relative">
-            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search quote #, customer, SO…"
-              className="w-full pl-9 pr-4 py-2.5 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-black transition" />
-            {search && <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-black text-lg">×</button>}
+          {/* Clickable status filters */}
+          <div className="flex gap-2 flex-wrap">
+            {([["all", "All", quoteRows.length], ["converted", "Converted", convertedQuotes.length], ["pending", "Pending", pendingQuotes.length], ["void", "Went Void", voidQuotes.length]] as const).map(([k, label, n]) => (
+              <button key={k} onClick={() => setQuoteView(k)}
+                className={`text-xs px-3 py-1.5 rounded-lg border transition ${quoteView === k ? "bg-black text-white border-black" : "border-zinc-200 text-zinc-600 hover:bg-zinc-50"}`}>
+                {label} <span className="fin-num opacity-70">({n})</span>
+              </button>
+            ))}
           </div>
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-zinc-400">
-              Showing <b className="text-zinc-600">{quoteView === "all" ? "all quotes" : quoteView === "converted" ? "converted quotes" : "pending quotes"}</b> ({visibleQuoteRows.length})
-            </p>
-            {quoteView !== "all" && <button onClick={() => setQuoteView("all")} className="text-xs text-zinc-400 hover:text-black border border-zinc-200 rounded px-2 py-1">Clear filter</button>}
+          <div className="flex items-center gap-3">
+            <div className="relative flex-1">
+              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search quote #, customer, SO…"
+                className="w-full pl-9 pr-4 py-2.5 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-black transition" />
+              {search && <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-black text-lg">×</button>}
+            </div>
+            <ExportButtons filename={`${clientName}-quote-vs-so`} title={`${clientName} — Quote vs Sales Order`}
+              columns={["Quote #", "Customer", "Quote Value", "Status", "Sales Order"]}
+              rows={visibleQuoteRows.map(r => [r.quote.estimate_number || "", r.quote.customer_name || "", Math.round(r.quote.total || 0), r.status, r.so?.salesorder_number || ""])} />
           </div>
           <Table cols={["Quote #", "Customer", "Quote Value", "Status", "Sales Order"]}
             rows={visibleQuoteRows.map(r => [
               <span className="font-mono text-xs text-zinc-500">{r.quote.estimate_number}</span>,
               r.quote.customer_name,
               <span className="font-semibold">{fmt(r.quote.total, r.quote.currency_code)}</span>,
-              r.converted ? <Badge s="confirmed" /> : <Badge s="pending" />,
-              r.so ? <span className="font-mono text-xs text-emerald-600">{r.so.salesorder_number}</span> : <span className="text-zinc-300">—</span>,
+              r.status === "converted" ? <Badge s="confirmed" /> : r.status === "void" ? <Badge s="void" /> : <Badge s="pending" />,
+              r.so ? <span className={`font-mono text-xs ${r.status === "void" ? "text-red-500 line-through" : "text-emerald-600"}`}>{r.so.salesorder_number}</span> : <span className="text-zinc-300">—</span>,
             ])} empty="No quotes for this filter" />
         </div>
       )}
@@ -2837,9 +2892,12 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
               </button>
             ))}
           </div>
-          <div className="relative">
+          <div className="flex items-center gap-3">
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search project or client…"
-              className="w-full px-4 py-2.5 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-black transition" />
+              className="flex-1 px-4 py-2.5 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-black transition" />
+            <ExportButtons filename={`${clientName}-project-summary`} title={`${clientName} — Project Summary`}
+              columns={["Project", "Client", "SOs", "Taxable", "GST", "Total Value", "Invoiced", "Received"]}
+              rows={projectRows.map(r => [r.project, r.customer, r.soCount, Math.round(r.taxable), Math.round(r.gst), Math.round(r.total), Math.round(r.invoiced), Math.round(r.received)])} />
           </div>
           <Table cols={["Project", "Client", "SOs", "Taxable", "GST", "Total Value", "Invoiced", "Received", "Progress"]}
             rows={projectRows.map(r => [
@@ -2863,6 +2921,11 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
             <Card label="Monthly Average" value={inr(revenueAvg)} color="text-blue-600" />
             <Card label="Best Month" value={inr(bestMonth.value)} sub={bestMonth.full !== "—" ? new Date(bestMonth.full + "-01").toLocaleDateString("en-IN", { month: "long", year: "numeric" }) : "—"} color="text-emerald-600" />
           </div>
+          <div className="flex justify-end">
+            <ExportButtons filename={`${clientName}-revenue-trend`} title={`${clientName} — Revenue Trend`}
+              columns={["Month", "Invoiced"]}
+              rows={revenueBars.map(b => [b.full, Math.round(b.value)])} />
+          </div>
           <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm">
             <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">Monthly Invoiced Revenue</p>
             {revenueBars.length ? <VBars data={revenueBars} color="#111" /> : <p className="text-zinc-400 text-sm py-10 text-center">No invoices to chart</p>}
@@ -2876,6 +2939,11 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
             <Card label="Customers" value={String(custMap.size)} />
             <Card label="Top Customer" value={topCustomers[0]?.name || "—"} sub={topCustomers[0] ? inr(topCustomers[0].invoiced) : ""} color="text-violet-600" />
             <Card label="Top 5 Share" value={`${custMap.size ? Math.round(topCustomers.slice(0,5).reduce((s,c)=>s+c.invoiced,0) / Array.from(custMap.values()).reduce((s,c)=>s+c.invoiced,0) * 100) : 0}%`} sub="of total invoiced" color="text-blue-600" />
+          </div>
+          <div className="flex justify-end">
+            <ExportButtons filename={`${clientName}-top-customers`} title={`${clientName} — Top Customers`}
+              columns={["Rank", "Customer", "Invoiced", "Received", "Invoices"]}
+              rows={topCustomers.map((c, i) => [i + 1, c.name, Math.round(c.invoiced), Math.round(c.received), c.count])} />
           </div>
           <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm space-y-3">
             <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1">Top Customers by Invoiced Value</p>
@@ -2898,7 +2966,12 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
             <Card label="Total Outstanding" value={inr(totalOutstanding)} color="text-amber-600" />
             <Card label="Overdue >90 days" value={inr(buckets[4].value)} color="text-red-600" />
             <Card label="Current (not overdue)" value={inr(buckets[0].value)} color="text-emerald-600" />
-            <Card label="Open Invoices" value={String(invoices.filter(i => (i.balance || 0) > 0).length)} />
+            <Card label="Open Invoices" value={String(fInvoices.filter(i => (i.balance || 0) > 0).length)} />
+          </div>
+          <div className="flex justify-end">
+            <ExportButtons filename={`${clientName}-receivables-ageing`} title={`${clientName} — Receivables Ageing`}
+              columns={["Bucket", "Outstanding"]}
+              rows={buckets.map(b => [b.label, Math.round(b.value)])} />
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm">
@@ -2936,11 +3009,16 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
               <Card label="Void Value" value={inr(voidVal)} color="text-red-600" />
               <Card label="Showing" value={String(rows.length)} sub={inr(shownVal)} />
             </div>
-            <div className="relative">
-              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search void SO #, customer, project…"
-                className="w-full pl-9 pr-4 py-2.5 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-black transition" />
-              {search && <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-black text-lg">×</button>}
+            <div className="flex items-center gap-3">
+              <div className="relative flex-1">
+                <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search void SO #, customer, project…"
+                  className="w-full pl-9 pr-4 py-2.5 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-black transition" />
+                {search && <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-black text-lg">×</button>}
+              </div>
+              <ExportButtons filename={`${clientName}-void-sos`} title={`${clientName} — Void Sales Orders`}
+                columns={["SO #", "Project", "Customer", "Date", "Taxable", "GST", "Total"]}
+                rows={rows.map(so => [so.salesorder_number || "", so.project_name || "", so.customer_name || "", so.date || "", Math.round(so.sub_total || 0), Math.round(so.tax_total || 0), Math.round(so.total || 0)])} />
             </div>
             <Table cols={["SO #", "Project", "Customer", "Date", "Taxable", "GST", "Total"]}
               rows={rows.map(so => [

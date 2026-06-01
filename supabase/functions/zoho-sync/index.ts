@@ -409,90 +409,84 @@ serve(async (req) => {
     const SUPABASE_URL = Deno.env.get("APP_SUPABASE_URL")!;
     const KEY = Deno.env.get("APP_SERVICE_ROLE_KEY")!;
 
-    const summary: Record<string, number> = {};
+    console.log(`Syncing org: ${orgId}`);
 
-    {
-      console.log(`Syncing org: ${orgId}`);
+    // Fetch all modules from Zoho in parallel (max 200/page each)
+    const [
+      contactsRaw, itemsRaw, estimatesRaw, salesOrdersRaw, invoicesRaw,
+      salesReceiptsRaw, custPaymentsRaw, creditNotesRaw, expensesRaw,
+      purchaseOrdersRaw, billsRaw, vendorPaymentsRaw, vendorCreditsRaw,
+      journalsRaw, bankAccountsRaw, bankTxRaw, taxPaymentsRaw,
+    ] = await Promise.all([
+      fetchAll(token, orgId, "contacts",        "contacts"),
+      fetchAll(token, orgId, "items",           "items"),
+      fetchAll(token, orgId, "estimates",       "estimates"),
+      fetchAll(token, orgId, "salesorders",     "salesorders"),
+      fetchAll(token, orgId, "invoices",        "invoices"),
+      fetchAll(token, orgId, "salesreceipts",   "salesreceipts"),
+      fetchAll(token, orgId, "customerpayments","customerpayments"),
+      fetchAll(token, orgId, "creditnotes",     "creditnotes"),
+      fetchAll(token, orgId, "expenses",        "expenses"),
+      fetchAll(token, orgId, "purchaseorders",  "purchaseorders"),
+      fetchAll(token, orgId, "bills",           "bills"),
+      fetchAll(token, orgId, "vendorpayments",  "vendorpayments"),
+      fetchAll(token, orgId, "vendorcredits",   "vendorcredits"),
+      fetchAll(token, orgId, "journals",        "journals"),
+      fetchAll(token, orgId, "bankaccounts",    "bankaccounts"),
+      fetchAll(token, orgId, "banktransactions","transactions"),
+      fetchAll(token, orgId, "taxpayments",     "tax_payments"),
+    ]);
 
-      // ── MASTER DATA ──────────────────────────────────────────────────────────
-      // Contacts (customers + vendors in one table)
-      const contacts = (await fetchAll(token, orgId, "contacts", "contacts")).map(c => mapContact(c, orgId));
-      await upsert(SUPABASE_URL, KEY, "contacts", contacts);
-      summary["contacts"] = (summary["contacts"] || 0) + contacts.length;
+    // Map all fetched data
+    const contacts       = contactsRaw.map(c  => mapContact(c, orgId));
+    const items          = itemsRaw.map(i      => mapItem(i, orgId));
+    const estimates      = estimatesRaw.map(e  => mapEstimate(e, orgId));
+    const salesOrders    = salesOrdersRaw.map(s => mapSalesOrder(s, orgId));
+    const invoices       = invoicesRaw.map(inv => mapInvoice(inv, orgId));
+    const salesReceipts  = salesReceiptsRaw.map(r => mapSalesReceipt(r, orgId));
+    const custPayments   = custPaymentsRaw.map(p => mapCustomerPayment(p, orgId));
+    const creditNotes    = creditNotesRaw.map(c => mapCreditNote(c, orgId));
+    const expenses       = expensesRaw.map(e   => mapExpense(e, orgId));
+    const purchaseOrders = purchaseOrdersRaw.map(po => mapPurchaseOrder(po, orgId));
+    const bills          = billsRaw.map(b      => mapBill(b, orgId));
+    const vendorPayments = vendorPaymentsRaw.map(p => mapVendorPayment(p, orgId));
+    const vendorCredits  = vendorCreditsRaw.map(c => mapVendorCredit(c, orgId));
+    const journals       = journalsRaw.map(j   => mapJournal(j, orgId));
+    const bankAccounts   = bankAccountsRaw.map(a => mapBankAccount(a, orgId));
+    const bankTx         = bankTxRaw.map(t     => mapBankTransaction(t, orgId));
+    const taxPayments    = taxPaymentsRaw.map(t => mapTaxPayment(t, orgId));
 
-      // Items / Products
-      const items = (await fetchAll(token, orgId, "items", "items")).map(i => mapItem(i, orgId));
-      await upsert(SUPABASE_URL, KEY, "items", items);
-      summary["items"] = (summary["items"] || 0) + items.length;
+    // Upsert all to Supabase in parallel
+    await Promise.all([
+      upsert(SUPABASE_URL, KEY, "contacts",          contacts),
+      upsert(SUPABASE_URL, KEY, "items",             items),
+      upsert(SUPABASE_URL, KEY, "estimates",         estimates),
+      upsert(SUPABASE_URL, KEY, "sales_orders",      salesOrders),
+      upsert(SUPABASE_URL, KEY, "finance_dashboard", invoices),
+      upsert(SUPABASE_URL, KEY, "sales_receipts",    salesReceipts),
+      upsert(SUPABASE_URL, KEY, "payments",          custPayments),
+      upsert(SUPABASE_URL, KEY, "credit_notes",      creditNotes),
+      upsert(SUPABASE_URL, KEY, "expenses",          expenses),
+      upsert(SUPABASE_URL, KEY, "purchase_orders",   purchaseOrders),
+      upsert(SUPABASE_URL, KEY, "bills",             bills),
+      upsert(SUPABASE_URL, KEY, "vendor_payments",   vendorPayments),
+      upsert(SUPABASE_URL, KEY, "vendor_credits",    vendorCredits),
+      upsert(SUPABASE_URL, KEY, "journals",          journals),
+      upsert(SUPABASE_URL, KEY, "bank_accounts",     bankAccounts),
+      upsert(SUPABASE_URL, KEY, "bank_transactions", bankTx),
+      upsert(SUPABASE_URL, KEY, "tax_payments",      taxPayments),
+    ]);
 
-      // ── SALES MODULE ─────────────────────────────────────────────────────────
-      const estimates = (await fetchAll(token, orgId, "estimates", "estimates")).map(e => mapEstimate(e, orgId));
-      await upsert(SUPABASE_URL, KEY, "estimates", estimates);
-      summary["estimates"] = (summary["estimates"] || 0) + estimates.length;
-
-      const salesOrders = (await fetchAll(token, orgId, "salesorders", "salesorders")).map(s => mapSalesOrder(s, orgId));
-      await upsert(SUPABASE_URL, KEY, "sales_orders", salesOrders);
-      summary["sales_orders"] = (summary["sales_orders"] || 0) + salesOrders.length;
-
-      const invoices = (await fetchAll(token, orgId, "invoices", "invoices")).map(inv => mapInvoice(inv, orgId));
-      await upsert(SUPABASE_URL, KEY, "finance_dashboard", invoices);
-      summary["invoices"] = (summary["invoices"] || 0) + invoices.length;
-
-      const salesReceipts = (await fetchAll(token, orgId, "salesreceipts", "salesreceipts")).map(r => mapSalesReceipt(r, orgId));
-      await upsert(SUPABASE_URL, KEY, "sales_receipts", salesReceipts);
-      summary["sales_receipts"] = (summary["sales_receipts"] || 0) + salesReceipts.length;
-
-      const custPayments = (await fetchAll(token, orgId, "customerpayments", "customerpayments")).map(p => mapCustomerPayment(p, orgId));
-      await upsert(SUPABASE_URL, KEY, "payments", custPayments);
-      summary["payments"] = (summary["payments"] || 0) + custPayments.length;
-
-      const creditNotes = (await fetchAll(token, orgId, "creditnotes", "creditnotes")).map(c => mapCreditNote(c, orgId));
-      await upsert(SUPABASE_URL, KEY, "credit_notes", creditNotes);
-      summary["credit_notes"] = (summary["credit_notes"] || 0) + creditNotes.length;
-
-      // ── EXPENSE MODULE ───────────────────────────────────────────────────────
-      const expenses = (await fetchAll(token, orgId, "expenses", "expenses")).map(e => mapExpense(e, orgId));
-      await upsert(SUPABASE_URL, KEY, "expenses", expenses);
-      summary["expenses"] = (summary["expenses"] || 0) + expenses.length;
-
-      // ── PURCHASE MODULE ──────────────────────────────────────────────────────
-      const purchaseOrders = (await fetchAll(token, orgId, "purchaseorders", "purchaseorders")).map(po => mapPurchaseOrder(po, orgId));
-      await upsert(SUPABASE_URL, KEY, "purchase_orders", purchaseOrders);
-      summary["purchase_orders"] = (summary["purchase_orders"] || 0) + purchaseOrders.length;
-
-      // Fetch bills - Zoho returns all bills with status filter
-      const billsList = await fetchAll(token, orgId, "bills", "bills");
-      const bills = billsList.map((b: any) => mapBill(b, orgId));
-      await upsert(SUPABASE_URL, KEY, "bills", bills);
-      summary["bills"] = (summary["bills"] || 0) + bills.length;
-
-      const vendorPayments = (await fetchAll(token, orgId, "vendorpayments", "vendorpayments")).map(p => mapVendorPayment(p, orgId));
-      await upsert(SUPABASE_URL, KEY, "vendor_payments", vendorPayments);
-      summary["vendor_payments"] = (summary["vendor_payments"] || 0) + vendorPayments.length;
-
-      const vendorCredits = (await fetchAll(token, orgId, "vendorcredits", "vendorcredits")).map(c => mapVendorCredit(c, orgId));
-      await upsert(SUPABASE_URL, KEY, "vendor_credits", vendorCredits);
-      summary["vendor_credits"] = (summary["vendor_credits"] || 0) + vendorCredits.length;
-
-      // ── ACCOUNTING / JOURNALS ────────────────────────────────────────────────
-      const journals = (await fetchAll(token, orgId, "journals", "journals")).map(j => mapJournal(j, orgId));
-      await upsert(SUPABASE_URL, KEY, "journals", journals);
-      summary["journals"] = (summary["journals"] || 0) + journals.length;
-
-      // ── BANKING ─────────────────────────────────────────────────────────────
-      const bankAccounts = (await fetchAll(token, orgId, "bankaccounts", "bankaccounts")).map(a => mapBankAccount(a, orgId));
-      await upsert(SUPABASE_URL, KEY, "bank_accounts", bankAccounts);
-      summary["bank_accounts"] = (summary["bank_accounts"] || 0) + bankAccounts.length;
-
-      const bankTransactions = (await fetchAll(token, orgId, "banktransactions", "transactions")).map(t => mapBankTransaction(t, orgId));
-      await upsert(SUPABASE_URL, KEY, "bank_transactions", bankTransactions);
-      summary["bank_transactions"] = (summary["bank_transactions"] || 0) + bankTransactions.length;
-
-      // ── TAX PAYMENTS ─────────────────────────────────────────────────────────
-      const taxPayments = (await fetchAll(token, orgId, "taxpayments", "tax_payments")).map(t => mapTaxPayment(t, orgId));
-      await upsert(SUPABASE_URL, KEY, "tax_payments", taxPayments);
-      summary["tax_payments"] = (summary["tax_payments"] || 0) + taxPayments.length;
-    }
+    const summary = {
+      contacts: contacts.length, items: items.length, estimates: estimates.length,
+      sales_orders: salesOrders.length, invoices: invoices.length,
+      sales_receipts: salesReceipts.length, payments: custPayments.length,
+      credit_notes: creditNotes.length, expenses: expenses.length,
+      purchase_orders: purchaseOrders.length, bills: bills.length,
+      vendor_payments: vendorPayments.length, vendor_credits: vendorCredits.length,
+      journals: journals.length, bank_accounts: bankAccounts.length,
+      bank_transactions: bankTx.length, tax_payments: taxPayments.length,
+    };
 
     const total = Object.values(summary).reduce((a, b) => a + b, 0);
     console.log(`Sync complete for org ${orgId}:`, summary);

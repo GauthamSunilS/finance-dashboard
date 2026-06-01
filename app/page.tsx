@@ -2790,6 +2790,39 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
   });
   const totalOutstanding = buckets.reduce((s, b) => s + b.value, 0);
 
+  // Void SOs list (shared by the Void SOs view and export)
+  const voidRows = filterByFYMonth(voidSOs, fy, month)
+    .filter(so => !search || `${so.salesorder_number} ${so.customer_name} ${so.project_name || ""}`.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => (b.total || 0) - (a.total || 0));
+
+  // ── Export config for the active report (CSV/PDF in the top bar) ────────────
+  const fullMonthName = (f: string) => f && f !== "—" ? new Date(f + "-01").toLocaleDateString("en-IN", { month: "long", year: "numeric" }) : "—";
+  let exportConf: { filename: string; title: string; columns: string[]; rows: (string | number)[][] };
+  if (report === "quote_so") {
+    exportConf = { filename: `${clientName}-quote-vs-so`, title: `${clientName} — Quote vs Sales Order`,
+      columns: ["Quote #", "Customer", "Quote Value", "Status", "Sales Order"],
+      rows: visibleQuoteRows.map(r => [r.quote.estimate_number || "", r.quote.customer_name || "", Math.round(r.quote.total || 0), r.status, r.so?.salesorder_number || ""]) };
+  } else if (report === "projects") {
+    exportConf = { filename: `${clientName}-project-summary`, title: `${clientName} — Project Summary`,
+      columns: ["Project", "Client", "SOs", "Taxable", "GST", "Total Value", "Invoiced", "Received"],
+      rows: projectRows.map(r => [r.project, r.customer, r.soCount, Math.round(r.taxable), Math.round(r.gst), Math.round(r.total), Math.round(r.invoiced), Math.round(r.received)]) };
+  } else if (report === "revenue") {
+    exportConf = { filename: `${clientName}-revenue-trend`, title: `${clientName} — Revenue Trend`,
+      columns: ["Month", "Invoiced", "% of total"],
+      rows: revenueBars.map(b => [fullMonthName(b.full), Math.round(b.value), revenueTotal ? `${(b.value / revenueTotal * 100).toFixed(1)}%` : "0%"]) };
+  } else if (report === "customers") {
+    exportConf = { filename: `${clientName}-top-customers`, title: `${clientName} — Top Customers`,
+      columns: ["Rank", "Customer", "Invoiced", "% of total", "Received", "Invoices"],
+      rows: topCustomers.map((c, i) => [i + 1, c.name, Math.round(c.invoiced), custInvTotal ? `${(c.invoiced / custInvTotal * 100).toFixed(1)}%` : "0%", Math.round(c.received), c.count]) };
+  } else if (report === "ageing") {
+    exportConf = { filename: `${clientName}-receivables-ageing`, title: `${clientName} — Receivables Ageing`,
+      columns: ["Bucket", "Outstanding"], rows: buckets.map(b => [b.label, Math.round(b.value)]) };
+  } else {
+    exportConf = { filename: `${clientName}-void-sos`, title: `${clientName} — Void Sales Orders`,
+      columns: ["SO #", "Project", "Customer", "Date", "Taxable", "GST", "Total"],
+      rows: voidRows.map(so => [so.salesorder_number || "", so.project_name || "", so.customer_name || "", so.date || "", Math.round(so.sub_total || 0), Math.round(so.tax_total || 0), Math.round(so.total || 0)]) };
+  }
+
   return (
     <div className="space-y-5">
       {/* Report switch */}
@@ -2838,9 +2871,9 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
             {search && <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-black text-lg">×</button>}
           </div>
         )}
-        <span className="ml-auto text-xs text-zinc-400">
-          {fy !== "All" || month !== "All" ? `Showing ${fy !== "All" ? fy : "all FYs"}${month !== "All" ? ` · ${new Date(month + "-01").toLocaleDateString("en-IN", { month: "short", year: "numeric" })}` : ""}` : ""}
-        </span>
+        <div className="ml-auto">
+          <ExportButtons {...exportConf} />
+        </div>
       </div>
 
       {report === "quote_so" && (
@@ -2876,12 +2909,7 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
                 ]} />
             </div>
           </div>
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-zinc-400">{visibleQuoteRows.length} {quoteView === "all" ? "quotes" : quoteView === "void" ? "went void" : quoteView}</p>
-            <ExportButtons filename={`${clientName}-quote-vs-so`} title={`${clientName} — Quote vs Sales Order`}
-              columns={["Quote #", "Customer", "Quote Value", "Status", "Sales Order"]}
-              rows={visibleQuoteRows.map(r => [r.quote.estimate_number || "", r.quote.customer_name || "", Math.round(r.quote.total || 0), r.status, r.so?.salesorder_number || ""])} />
-          </div>
+          <p className="text-xs text-zinc-400">{visibleQuoteRows.length} {quoteView === "all" ? "quotes" : quoteView === "void" ? "went void" : quoteView}</p>
           <Table cols={["Quote #", "Customer", "Quote Value", "Status", "Sales Order"]}
             rows={visibleQuoteRows.map(r => [
               <span className="font-mono text-xs text-zinc-500">{r.quote.estimate_number}</span>,
@@ -2906,13 +2934,7 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
             <Card label="Invoiced" value={inr(totInvoiced)} sub={`${totSoVal ? Math.round(totInvoiced / totSoVal * 100) : 0}% of value`} color="text-blue-600" />
             <Card label="Received" value={inr(totReceived)} sub={`${totInvoiced ? Math.round(totReceived / totInvoiced * 100) : 0}% of invoiced`} color="text-emerald-600" />
           </div>
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-zinc-400">{projectRows.length} projects</p>
-            <ExportButtons filename={`${clientName}-project-summary`} title={`${clientName} — Project Summary`}
-              columns={["Project", "Client", "SOs", "Taxable", "GST", "Total Value", "Invoiced", "Received"]}
-              rows={projectRows.map(r => [r.project, r.customer, r.soCount, Math.round(r.taxable), Math.round(r.gst), Math.round(r.total), Math.round(r.invoiced), Math.round(r.received)])} />
-          </div>
-          <p className="text-xs text-zinc-400">Click a project to expand its sales orders.</p>
+          <p className="text-xs text-zinc-400">{projectRows.length} projects · click a row to expand its sales orders</p>
           <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden shadow-sm">
             <div className="overflow-x-auto">
               <table className="w-full text-sm fin-num">
@@ -2983,11 +3005,6 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
             <Card label="Highest Month" value={inr(bestMonth.value)} sub={fullMonth(bestMonth.full)} color="text-emerald-600" />
             <Card label="Lowest Month" value={lowMonth ? inr(lowVal) : "—"} sub={lowMonth ? fullMonth(lowMonth.full) : "—"} color="text-amber-600" />
           </div>
-          <div className="flex justify-end">
-            <ExportButtons filename={`${clientName}-revenue-trend`} title={`${clientName} — Revenue Trend`}
-              columns={["Month", "Invoiced", "% of total"]}
-              rows={revenueBars.map(b => [b.full, Math.round(b.value), revenueTotal ? `${(b.value / revenueTotal * 100).toFixed(1)}%` : "0%"])} />
-          </div>
           <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm">
             <div className="flex items-center justify-between mb-4">
               <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Monthly Invoiced Revenue</p>
@@ -3030,11 +3047,6 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
             <Card label="Top Customer" value={topCustomers[0]?.name || "—"} sub={topCustomers[0] ? inr(topCustomers[0].invoiced) : ""} color="text-violet-600" />
             <Card label="Top 5 Share" value={`${custMap.size ? Math.round(topCustomers.slice(0,5).reduce((s,c)=>s+c.invoiced,0) / Array.from(custMap.values()).reduce((s,c)=>s+c.invoiced,0) * 100) : 0}%`} sub="of total invoiced" color="text-blue-600" />
           </div>
-          <div className="flex justify-end">
-            <ExportButtons filename={`${clientName}-top-customers`} title={`${clientName} — Top Customers`}
-              columns={["Rank", "Customer", "Invoiced", "% of total", "Received", "Invoices"]}
-              rows={topCustomers.map((c, i) => [i + 1, c.name, Math.round(c.invoiced), custInvTotal ? `${(c.invoiced / custInvTotal * 100).toFixed(1)}%` : "0%", Math.round(c.received), c.count])} />
-          </div>
           <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm space-y-3">
             <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1">Top Customers by Invoiced Value</p>
             {topCustomers.map((c, i) => {
@@ -3062,11 +3074,6 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
             <Card label="Current (not overdue)" value={inr(buckets[0].value)} color="text-emerald-600" />
             <Card label="Open Invoices" value={String(fInvoices.filter(i => (i.balance || 0) > 0).length)} />
           </div>
-          <div className="flex justify-end">
-            <ExportButtons filename={`${clientName}-receivables-ageing`} title={`${clientName} — Receivables Ageing`}
-              columns={["Bucket", "Outstanding"]}
-              rows={buckets.map(b => [b.label, Math.round(b.value)])} />
-          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm">
               <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-4">Outstanding by Age</p>
@@ -3089,10 +3096,7 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
       )}
 
       {report === "voids" && (() => {
-        const rows = filterByFYMonth(voidSOs, fy, month)
-          .filter(so => !search || `${so.salesorder_number} ${so.customer_name} ${so.project_name || ""}`.toLowerCase().includes(search.toLowerCase()))
-          .sort((a, b) => (b.total || 0) - (a.total || 0));
-        const shownVal = rows.reduce((s, so) => s + (so.total || 0), 0);
+        const shownVal = voidRows.reduce((s, so) => s + (so.total || 0), 0);
         return (
           <div className="space-y-5">
             <div className="text-xs text-zinc-500 bg-zinc-50 border border-zinc-200 rounded-lg px-3 py-2">
@@ -3101,15 +3105,10 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               <Card label="Void SOs" value={String(voidSOs.length)} color="text-red-600" />
               <Card label="Void Value" value={inr(voidVal)} color="text-red-600" />
-              <Card label="Showing" value={String(rows.length)} sub={inr(shownVal)} />
-            </div>
-            <div className="flex justify-end">
-              <ExportButtons filename={`${clientName}-void-sos`} title={`${clientName} — Void Sales Orders`}
-                columns={["SO #", "Project", "Customer", "Date", "Taxable", "GST", "Total"]}
-                rows={rows.map(so => [so.salesorder_number || "", so.project_name || "", so.customer_name || "", so.date || "", Math.round(so.sub_total || 0), Math.round(so.tax_total || 0), Math.round(so.total || 0)])} />
+              <Card label="Showing" value={String(voidRows.length)} sub={inr(shownVal)} />
             </div>
             <Table cols={["SO #", "Project", "Customer", "Date", "Taxable", "GST", "Total"]}
-              rows={rows.map(so => [
+              rows={voidRows.map(so => [
                 <span className="font-mono text-xs text-zinc-500">{so.salesorder_number}</span>,
                 <span className="text-zinc-600">{so.project_name || "—"}</span>,
                 so.customer_name,

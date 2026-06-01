@@ -2654,7 +2654,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
                 onClick={() => { try { window.location.hash = client.id + "|accounting"; } catch {} setActiveClientId(client.id); }}
                 className="w-full grid grid-cols-12 items-center px-6 py-4 text-left hover:bg-zinc-50 transition border-b border-zinc-100 last:border-0 group">
                 <div className="col-span-8 flex items-center gap-4">
-                  <span className="text-xs text-zinc-300 w-5 text-right">{String(i + 1).padStart(2, "0")}</span>
+                  <span className="text-xs text-zinc-400 font-medium w-5 text-right tabular-nums">{String(i + 1).padStart(2, "0")}</span>
                   <span className="font-semibold text-black text-sm group-hover:underline">{client.name}</span>
                 </div>
                 <div className="col-span-3">

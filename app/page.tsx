@@ -2628,6 +2628,7 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
   const [month, setMonth] = useState("All");
   const [quoteView, setQuoteView] = useState<"all" | "converted" | "pending" | "void">("all");
   const [projView, setProjView] = useState<"all" | "not_invoiced" | "in_progress" | "completed">("all");
+  const [ageView, setAgeView] = useState<string>("all");
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
   const toggleProject = (key: string) => setExpandedProjects(prev => {
     const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next;
@@ -2790,6 +2791,16 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
   });
   const totalOutstanding = buckets.reduce((s, b) => s + b.value, 0);
 
+  // Open invoices with ageing bucket — the trackable detail behind the chart
+  const bucketOf = (days: number) => days <= 0 ? "Current" : days <= 30 ? "1–30 days" : days <= 60 ? "31–60 days" : days <= 90 ? "61–90 days" : "90+ days";
+  const ageOpenInvoices = fInvoices
+    .filter(i => (i.balance || 0) > 0)
+    .map(i => { const days = daysDiff(i.due_date || i.date); return { inv: i, days, bucket: bucketOf(days) }; });
+  const ageRows = ageOpenInvoices
+    .filter(r => ageView === "all" || r.bucket === ageView)
+    .filter(r => !search || `${r.inv.invoice_number} ${r.inv.customer_name}`.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => b.days - a.days);
+
   // Void SOs list (shared by the Void SOs view and export)
   const voidRows = filterByFYMonth(voidSOs, fy, month)
     .filter(so => !search || `${so.salesorder_number} ${so.customer_name} ${so.project_name || ""}`.toLowerCase().includes(search.toLowerCase()))
@@ -2816,7 +2827,8 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
       rows: topCustomers.map((c, i) => [i + 1, c.name, Math.round(c.invoiced), custInvTotal ? `${(c.invoiced / custInvTotal * 100).toFixed(1)}%` : "0%", Math.round(c.received), c.count]) };
   } else if (report === "ageing") {
     exportConf = { filename: `${clientName}-receivables-ageing`, title: `${clientName} — Receivables Ageing`,
-      columns: ["Bucket", "Outstanding"], rows: buckets.map(b => [b.label, Math.round(b.value)]) };
+      columns: ["Invoice #", "Customer", "Date", "Due Date", "Days Overdue", "Total", "Balance", "Bucket"],
+      rows: ageRows.map(r => [r.inv.invoice_number || "", r.inv.customer_name || "", r.inv.date || "", r.inv.due_date || "", r.days > 0 ? r.days : 0, Math.round(r.inv.total || 0), Math.round(r.inv.balance || 0), r.bucket]) };
   } else {
     exportConf = { filename: `${clientName}-void-sos`, title: `${clientName} — Void Sales Orders`,
       columns: ["SO #", "Project", "Customer", "Date", "Taxable", "GST", "Total"],
@@ -2862,11 +2874,22 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
             </select>
           </>
         )}
-        {(report === "quote_so" || report === "projects" || report === "voids") && (
+        {report === "ageing" && (
+          <>
+            <span className="text-xs text-zinc-400 font-medium">Bucket:</span>
+            <select value={ageView} onChange={e => setAgeView(e.target.value)}
+              className="text-xs border border-zinc-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-black bg-white">
+              {["all", "Current", "1–30 days", "31–60 days", "61–90 days", "90+ days"].map(b => (
+                <option key={b} value={b}>{b === "all" ? "All buckets" : b}</option>
+              ))}
+            </select>
+          </>
+        )}
+        {(report === "quote_so" || report === "projects" || report === "voids" || report === "ageing") && (
           <div className="relative flex-1 min-w-[180px]">
             <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
             <input value={search} onChange={e => setSearch(e.target.value)}
-              placeholder={report === "projects" ? "Search project or client…" : report === "voids" ? "Search void SO, customer, project…" : "Search quote #, customer, SO…"}
+              placeholder={report === "projects" ? "Search project or client…" : report === "voids" ? "Search void SO, customer, project…" : report === "ageing" ? "Search invoice #, customer…" : "Search quote #, customer, SO…"}
               className="w-full pl-9 pr-4 py-1.5 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-black transition" />
             {search && <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-black text-lg">×</button>}
           </div>
@@ -3081,9 +3104,10 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
                 data={buckets.filter(b => b.value > 0).map(b => ({ label: b.label, value: b.value, color: b.color }))} />
             </div>
             <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm space-y-3">
-              <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1">Ageing Breakdown</p>
+              <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1">Ageing Breakdown <span className="normal-case text-zinc-300">· click to filter</span></p>
               {buckets.map((b, i) => (
-                <div key={i} className="flex items-center gap-3">
+                <div key={i} onClick={() => setAgeView(ageView === b.label ? "all" : b.label)}
+                  className={`flex items-center gap-3 cursor-pointer rounded-lg px-1 py-0.5 -mx-1 transition ${ageView === b.label ? "bg-zinc-100" : "hover:bg-zinc-50"}`}>
                   <span className="w-3 h-3 rounded-sm shrink-0" style={{ background: b.color }} />
                   <span className="text-sm text-zinc-600 w-28">{b.label}</span>
                   <div className="flex-1"><MiniBar value={b.value} max={Math.max(1, ...buckets.map(x => x.value))} color={b.color} /></div>
@@ -3092,6 +3116,25 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
               ))}
             </div>
           </div>
+          {/* Invoice-level detail for follow-up */}
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-zinc-400">{ageRows.length} open invoice{ageRows.length !== 1 ? "s" : ""}{ageView !== "all" ? ` · ${ageView}` : ""}</p>
+            {ageView !== "all" && <button onClick={() => setAgeView("all")} className="text-xs text-zinc-400 hover:text-black border border-zinc-200 rounded px-2 py-1">Clear bucket</button>}
+          </div>
+          <Table cols={["Invoice #", "Customer", "Date", "Due", "Days Overdue", "Total", "Balance", "Bucket"]}
+            rows={ageRows.map(r => {
+              const b = buckets.find(x => x.label === r.bucket);
+              return [
+                <span className="font-mono text-xs text-zinc-500">{r.inv.invoice_number}</span>,
+                r.inv.customer_name,
+                fdate(r.inv.date),
+                fdate(r.inv.due_date),
+                <span className={r.days > 0 ? "font-semibold text-red-500" : "text-zinc-400"}>{r.days > 0 ? `${r.days}d` : "—"}</span>,
+                <span className="text-zinc-600">{fmt(r.inv.total, r.inv.currency_code)}</span>,
+                <span className="font-semibold text-amber-600">{fmt(r.inv.balance, r.inv.currency_code)}</span>,
+                <span className="inline-flex items-center gap-1.5 text-xs"><span className="w-2 h-2 rounded-sm" style={{ background: b?.color }} />{r.bucket}</span>,
+              ];
+            })} empty="No open invoices for this filter" />
         </div>
       )}
 

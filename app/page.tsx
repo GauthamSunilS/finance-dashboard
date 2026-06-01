@@ -2613,6 +2613,11 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
   const convertedVal = convertedQuotes.reduce((s, r) => s + (r.quote.total || 0), 0);
   const soTotalVal = salesOrders.reduce((s, so) => s + (so.total || 0), 0);
   const convRateCount = estimates.length ? Math.round((convertedQuotes.length / estimates.length) * 100) : 0;
+  const convRateValue = totalQuoteVal ? Math.round((convertedVal / totalQuoteVal) * 100) : 0;
+  // SO-side split so the SO total reconciles with the quote-side donut
+  const estNumbers = new Set(estimates.map(e => (e.estimate_number || "").trim()));
+  const soFromQuotesVal = salesOrders.filter(so => so.reference_number && estNumbers.has(so.reference_number.trim())).reduce((s, so) => s + (so.total || 0), 0);
+  const soDirectVal = soTotalVal - soFromQuotesVal;
 
   // ── Report 2: Project summary ──────────────────────────────────────────────
   const invBySo = new Map<string, { invoiced: number; received: number }>();
@@ -2702,10 +2707,13 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
       {report === "quote_so" && (
         <div className="space-y-5">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Card label="Total Quotes" value={String(estimates.length)} sub={inr(totalQuoteVal)} />
-            <Card label="Converted to SO" value={String(convertedQuotes.length)} sub={inr(convertedVal)} color="text-emerald-600" />
-            <Card label="Conversion Rate" value={`${convRateCount}%`} sub="by count" color="text-blue-600" />
-            <Card label="Total SO Value" value={inr(soTotalVal)} color="text-violet-600" />
+            <Card label="Total Quotes" value={String(estimates.length)} sub={`${inr(totalQuoteVal)} quoted`} />
+            <Card label="Converted to SO" value={String(convertedQuotes.length)} sub={`${inr(convertedVal)} quote value`} color="text-emerald-600" />
+            <Card label="Conversion Rate" value={`${convRateCount}%`} sub={`${convRateValue}% by value`} color="text-blue-600" />
+            <Card label="Total SO Value" value={inr(soTotalVal)} sub={soDirectVal > 0 ? `incl. ${inr(soDirectVal)} direct (no quote)` : "all sales orders"} color="text-violet-600" />
+          </div>
+          <div className="text-xs text-zinc-400 bg-zinc-50 border border-zinc-200 rounded-lg px-3 py-2">
+            Quote-side vs SO-side differ by design: converted quotes were worth <b className="text-zinc-600">{inr(convertedVal)}</b> at quote stage but became SOs worth <b className="text-zinc-600">{inr(soFromQuotesVal)}</b> (revisions/add-ons), plus <b className="text-zinc-600">{inr(soDirectVal)}</b> of SOs raised without a quote.
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm">
@@ -2717,10 +2725,10 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
                 ]} />
             </div>
             <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm">
-              <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-4">Value: Quoted vs Converted</p>
-              <Donut centerValue={inr(convertedVal)} centerLabel="converted"
+              <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-4">Quote Value: Converted vs Pending</p>
+              <Donut centerValue={`${convRateValue}%`} centerLabel="of quoted value"
                 data={[
-                  { label: "Converted value", value: convertedVal, color: "#7c3aed" },
+                  { label: "Converted (quote value)", value: convertedVal, color: "#7c3aed" },
                   { label: "Not converted", value: Math.max(0, totalQuoteVal - convertedVal), color: "#e4e4e7" },
                 ]} />
             </div>

@@ -30,15 +30,15 @@ async function getAccessToken(orgId: string): Promise<string> {
 
 // ─── Concurrency-limited batch fetcher ───────────────────────────────────────
 async function fetchDetails<T>(
-  ids: string[], fetchOne: (id: string) => Promise<T>, concurrency = 15
+  ids: string[], fetchOne: (id: string) => Promise<T>, fallback: (id: string) => T, concurrency = 15
 ): Promise<T[]> {
   const results: T[] = [];
   for (let i = 0; i < ids.length; i += concurrency) {
     const batch = ids.slice(i, i + concurrency);
     const settled = await Promise.allSettled(batch.map(fetchOne));
-    for (const r of settled) {
-      if (r.status === "fulfilled") results.push(r.value);
-    }
+    settled.forEach((r, j) => {
+      results.push(r.status === "fulfilled" ? r.value : fallback(batch[j]));
+    });
   }
   return results;
 }
@@ -157,19 +157,27 @@ function mapSalesOrder(s: any, orgId: string) {
 }
 
 function mapInvoice(inv: any, orgId: string) {
+  // tax_total from list API is often 0 for multi-component GST (CGST+SGST)
+  // Fall back to summing the taxes array from the detail API
+  let taxTotal = Number(inv.tax_total || 0);
+  if (taxTotal === 0 && Array.isArray(inv.taxes) && inv.taxes.length > 0) {
+    taxTotal = inv.taxes.reduce((s: number, t: any) => s + Number(t.tax_amount || 0), 0);
+  }
+  const total   = Number(inv.total || 0);
+  const subTotal = Number(inv.sub_total || 0) || (total - taxTotal);
   return {
     id: inv.invoice_id, org_id: orgId,
     invoice_number: inv.invoice_number,
-    reference_number: inv.reference_number || null,  // used as IRN store
+    reference_number: inv.reference_number || null,
     customer_id: inv.customer_id, customer_name: inv.customer_name,
     gst_number: inv.gst_no || null,
     salesorder_id: inv.salesorder_id || null,
     status: inv.status, date: inv.date,
     due_date: inv.due_date || null,
-    sub_total: Number(inv.sub_total || 0) || (Number(inv.total || 0) - Number(inv.tax_total || 0)),
+    sub_total: subTotal,
     discount_total: Number(inv.discount_total || 0),
-    tax_total: Number(inv.tax_total || 0),
-    total: Number(inv.total || 0),
+    tax_total: taxTotal,
+    total,
     balance: Number(inv.balance || 0),
     currency_code: inv.currency_code || "INR",
     created_time: inv.created_time, last_modified_time: inv.last_modified_time,
@@ -457,7 +465,8 @@ serve(async (req) => {
     const items          = itemsRaw.map(i      => mapItem(i, orgId));
     const estimates      = estimatesRaw.map(e  => mapEstimate(e, orgId));
     const salesOrders    = salesOrdersRaw.map(s => mapSalesOrder(s, orgId));
-    // Fetch full invoice details in batches of 15 to get correct tax_total
+    // Fetch full invoice details concurrently to get correct tax breakdown (CGST+SGST)
+    const invoiceMap = new Map(invoicesRaw.map((inv: any) => [inv.invoice_id, inv]));
     const invoices = await fetchDetails(
       invoicesRaw.map((inv: any) => inv.invoice_id),
       async (id) => {
@@ -466,8 +475,9 @@ serve(async (req) => {
           { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
         );
         const d = await r.json();
-        return mapInvoice(d.invoice || invoicesRaw.find((i: any) => i.invoice_id === id), orgId);
+        return mapInvoice(d.invoice || invoiceMap.get(id), orgId);
       },
+      (id) => mapInvoice(invoiceMap.get(id), orgId),
       50
     );
     const salesReceipts  = salesReceiptsRaw.map(r => mapSalesReceipt(r, orgId));

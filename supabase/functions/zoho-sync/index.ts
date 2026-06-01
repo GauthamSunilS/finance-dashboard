@@ -156,15 +156,29 @@ function mapSalesOrder(s: any, orgId: string) {
   };
 }
 
-function mapInvoice(inv: any, orgId: string) {
-  // tax_total from list API is often 0 for multi-component GST (CGST+SGST)
-  // Fall back to summing the taxes array from the detail API
-  let taxTotal = Number(inv.tax_total || 0);
-  if (taxTotal === 0 && Array.isArray(inv.taxes) && inv.taxes.length > 0) {
-    taxTotal = inv.taxes.reduce((s: number, t: any) => s + Number(t.tax_amount || 0), 0);
+function resolveTax(inv: any): number {
+  // 1. Top-level tax_total
+  const t1 = Number(inv.tax_total || 0);
+  if (t1 > 0) return t1;
+  // 2. Sum taxes[] array (CGST + SGST + IGST entries)
+  if (Array.isArray(inv.taxes) && inv.taxes.length > 0) {
+    const t2 = inv.taxes.reduce((s: number, t: any) => s + Number(t.tax_amount || 0), 0);
+    if (t2 > 0) return t2;
   }
-  const total   = Number(inv.total || 0);
-  const subTotal = Number(inv.sub_total || 0) || (total - taxTotal);
+  // 3. Individual CGST / SGST / IGST fields
+  const t3 = Number(inv.cgst_total || 0) + Number(inv.sgst_total || 0) + Number(inv.igst_total || 0);
+  if (t3 > 0) return t3;
+  // 4. Derive from total - sub_total if both are present and different
+  const sub = Number(inv.sub_total || 0);
+  const tot = Number(inv.total || 0);
+  if (sub > 0 && tot > sub) return tot - sub;
+  return 0;
+}
+
+function mapInvoice(inv: any, orgId: string) {
+  const taxTotal  = resolveTax(inv);
+  const total     = Number(inv.total || 0);
+  const subTotal  = Number(inv.sub_total || 0) || (total - taxTotal);
   return {
     id: inv.invoice_id, org_id: orgId,
     invoice_number: inv.invoice_number,

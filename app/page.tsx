@@ -2972,8 +2972,8 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Card label="Invoiced (last 12 mo)" value={inr(revenueTotal)} color="text-violet-600" />
             <Card label="Monthly Average" value={inr(revenueAvg)} color="text-blue-600" />
-            <Card label="Peak Season" value={inr(bestMonth.value)} sub={fullMonth(bestMonth.full)} color="text-emerald-600" />
-            <Card label="Dry Season" value={lowMonth ? inr(lowVal) : "—"} sub={lowMonth ? fullMonth(lowMonth.full) : "—"} color="text-amber-600" />
+            <Card label="Highest Month" value={inr(bestMonth.value)} sub={fullMonth(bestMonth.full)} color="text-emerald-600" />
+            <Card label="Lowest Month" value={lowMonth ? inr(lowVal) : "—"} sub={lowMonth ? fullMonth(lowMonth.full) : "—"} color="text-amber-600" />
           </div>
           <div className="flex justify-end">
             <ExportButtons filename={`${clientName}-revenue-trend`} title={`${clientName} — Revenue Trend`}
@@ -2984,8 +2984,8 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
             <div className="flex items-center justify-between mb-4">
               <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Monthly Invoiced Revenue</p>
               <div className="flex gap-3 text-[10px] text-zinc-400">
-                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" />Peak</span>
-                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-500" />Dry</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" />Highest</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-500" />Lowest</span>
               </div>
             </div>
             {revenueBars.length ? (

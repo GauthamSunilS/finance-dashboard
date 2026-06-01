@@ -33,7 +33,7 @@ const COMPANY_NAME = "Gautham & Associates";
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Client = { id: string; name: string; source: string; org_id: string | null };
 type Invoice = { id: string; invoice_number: string; customer_name: string; status: string; date: string; due_date: string; sub_total: number; tax_total: number; total: number; balance: number; currency_code: string | null; reference_number: string | null; gst_number: string | null };
-type SalesOrder = { id: string; salesorder_number: string; reference_number: string | null; customer_name: string; status: string; date: string; shipment_date: string | null; total: number; billed_status: string | null; currency_code: string | null; project_name?: string | null };
+type SalesOrder = { id: string; salesorder_number: string; reference_number: string | null; customer_name: string; status: string; date: string; shipment_date: string | null; sub_total: number; tax_total: number; total: number; billed_status: string | null; currency_code: string | null; project_name?: string | null };
 type Estimate = { id: string; estimate_number: string; customer_name: string; status: string; date: string; expiry_date: string | null; total: number; currency_code: string | null };
 type Payment = { id: string; payment_number: string; customer_name: string; payment_mode: string | null; amount: number; currency_code: string | null; exchange_rate: number | null; date: string; reference_number: string | null };
 type Expense = { id: string; expense_number: string | null; account_name: string | null; vendor_name: string | null; status: string; date: string; total: number; sub_total: number; tax_total: number; currency_code: string | null; description: string | null };
@@ -2589,6 +2589,7 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
   const [fy, setFy] = useState("All");
   const [month, setMonth] = useState("All");
   const [quoteView, setQuoteView] = useState<"all" | "converted" | "pending">("all");
+  const [projView, setProjView] = useState<"all" | "not_invoiced" | "in_progress" | "completed">("all");
 
   useEffect(() => {
     setLoading(true);
@@ -2643,21 +2644,44 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
     cur.received += (inv.total || 0) - (inv.balance || 0);
     invBySo.set(soid, cur);
   });
-  const projectRows = fSalesOrders.map(so => {
+  // Group SOs by Project Name (a project can span multiple SOs)
+  type Proj = { key: string; project: string; customers: Set<string>; taxable: number; gst: number; total: number; invoiced: number; received: number; soCount: number };
+  const projMap = new Map<string, Proj>();
+  fSalesOrders.forEach(so => {
+    const pname = (so.project_name || "").trim();
+    const key = pname || `__so_${so.id}`; // SOs without a project name stay as their own row
     const agg = invBySo.get(so.id) || { invoiced: 0, received: 0 };
-    return {
-      id: so.id, customer: so.customer_name, project: so.project_name || "—",
-      soNumber: so.salesorder_number, soValue: so.total || 0,
-      invoiced: agg.invoiced, received: agg.received,
-    };
-  }).filter(r => !search ||
-    `${r.customer} ${r.project} ${r.soNumber}`.toLowerCase().includes(search.toLowerCase())
-  ).sort((a, b) => b.soValue - a.soValue);
+    const e = projMap.get(key) || { key, project: pname || "—", customers: new Set<string>(), taxable: 0, gst: 0, total: 0, invoiced: 0, received: 0, soCount: 0 };
+    if (so.customer_name) e.customers.add(so.customer_name);
+    e.taxable += so.sub_total || 0;
+    e.gst += so.tax_total || 0;
+    e.total += so.total || 0;
+    e.invoiced += agg.invoiced;
+    e.received += agg.received;
+    e.soCount += 1;
+    projMap.set(key, e);
+  });
+  const projStatus = (p: Proj): "not_invoiced" | "in_progress" | "completed" =>
+    p.invoiced <= 0 ? "not_invoiced" : p.received >= p.total - 1 ? "completed" : "in_progress";
+  const allProjects = Array.from(projMap.values()).map(p => ({
+    ...p,
+    customer: Array.from(p.customers)[0] + (p.customers.size > 1 ? ` +${p.customers.size - 1}` : ""),
+    status: projStatus(p),
+  }));
+  const projectRows = allProjects
+    .filter(p => projView === "all" || p.status === projView)
+    .filter(p => !search || `${p.customer} ${p.project}`.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => b.total - a.total);
 
-  const totSoVal = projectRows.reduce((s, r) => s + r.soValue, 0);
+  const totSoVal = projectRows.reduce((s, r) => s + r.total, 0);
   const totInvoiced = projectRows.reduce((s, r) => s + r.invoiced, 0);
   const totReceived = projectRows.reduce((s, r) => s + r.received, 0);
-  const maxSo = Math.max(1, ...projectRows.map(r => r.soValue));
+  const projCounts = {
+    all: allProjects.length,
+    not_invoiced: allProjects.filter(p => p.status === "not_invoiced").length,
+    in_progress: allProjects.filter(p => p.status === "in_progress").length,
+    completed: allProjects.filter(p => p.status === "completed").length,
+  };
   const noProjectName = salesOrders.length > 0 && salesOrders.every(so => !so.project_name);
 
   // ── Report 3: Revenue trend (last 12 months, by invoice date) ──────────────
@@ -2785,25 +2809,36 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
             </div>
           )}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Card label="Sales Orders" value={String(projectRows.length)} />
-            <Card label="Total SO Value" value={inr(totSoVal)} color="text-violet-600" />
-            <Card label="Invoiced" value={inr(totInvoiced)} sub={`${totSoVal ? Math.round(totInvoiced / totSoVal * 100) : 0}% of SO`} color="text-blue-600" />
+            <Card label="Projects" value={String(projCounts.all)} sub={`${salesOrders.length} SOs`} />
+            <Card label="Total Value" value={inr(totSoVal)} color="text-violet-600" />
+            <Card label="Invoiced" value={inr(totInvoiced)} sub={`${totSoVal ? Math.round(totInvoiced / totSoVal * 100) : 0}% of value`} color="text-blue-600" />
             <Card label="Received" value={inr(totReceived)} sub={`${totInvoiced ? Math.round(totReceived / totInvoiced * 100) : 0}% of invoiced`} color="text-emerald-600" />
           </div>
+          {/* Clickable status filters */}
+          <div className="flex gap-2 flex-wrap">
+            {([["all", "All", projCounts.all], ["not_invoiced", "Not Invoiced", projCounts.not_invoiced], ["in_progress", "In Progress", projCounts.in_progress], ["completed", "Completed", projCounts.completed]] as const).map(([k, label, n]) => (
+              <button key={k} onClick={() => setProjView(k)}
+                className={`text-xs px-3 py-1.5 rounded-lg border transition ${projView === k ? "bg-black text-white border-black" : "border-zinc-200 text-zinc-600 hover:bg-zinc-50"}`}>
+                {label} <span className="fin-num opacity-70">({n})</span>
+              </button>
+            ))}
+          </div>
           <div className="relative">
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search project, client, SO…"
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search project or client…"
               className="w-full px-4 py-2.5 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-black transition" />
           </div>
-          <Table cols={["Client", "Project", "SO #", "SO Value", "Invoiced", "Received", "Progress"]}
+          <Table cols={["Project", "Client", "SOs", "Taxable", "GST", "Total Value", "Invoiced", "Received", "Progress"]}
             rows={projectRows.map(r => [
-              <span className="text-zinc-800">{r.customer}</span>,
-              <span className="text-zinc-600">{r.project}</span>,
-              <span className="font-mono text-xs text-zinc-500">{r.soNumber}</span>,
-              <span className="font-semibold">{inr(r.soValue)}</span>,
+              <span className="font-medium text-zinc-800">{r.project}</span>,
+              <span className="text-zinc-600">{r.customer}</span>,
+              <span className="text-zinc-400 fin-num">{r.soCount}</span>,
+              <span className="text-zinc-600">{inr(r.taxable)}</span>,
+              r.gst > 0 ? <span className="text-blue-600">{inr(r.gst)}</span> : <span className="text-zinc-300">—</span>,
+              <span className="font-semibold">{inr(r.total)}</span>,
               <span className="text-blue-600">{r.invoiced > 0 ? inr(r.invoiced) : "—"}</span>,
               <span className="text-emerald-600">{r.received > 0 ? inr(r.received) : "—"}</span>,
-              <div className="w-28"><MiniBar value={r.received} max={r.soValue} color="#10b981" /></div>,
-            ])} empty="No sales orders — sync from Zoho" />
+              <div className="w-24"><MiniBar value={r.received} max={r.total} color="#10b981" /></div>,
+            ])} empty="No projects for this filter" />
         </div>
       )}
 

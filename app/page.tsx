@@ -33,7 +33,7 @@ const COMPANY_NAME = "Gautham & Associates";
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Client = { id: string; name: string; source: string; org_id: string | null };
 type Invoice = { id: string; invoice_number: string; customer_name: string; status: string; date: string; due_date: string; sub_total: number; tax_total: number; total: number; balance: number; currency_code: string | null; reference_number: string | null; gst_number: string | null };
-type SalesOrder = { id: string; salesorder_number: string; customer_name: string; status: string; date: string; shipment_date: string | null; total: number; billed_status: string | null; currency_code: string | null };
+type SalesOrder = { id: string; salesorder_number: string; reference_number: string | null; customer_name: string; status: string; date: string; shipment_date: string | null; total: number; billed_status: string | null; currency_code: string | null; project_name?: string | null };
 type Estimate = { id: string; estimate_number: string; customer_name: string; status: string; date: string; expiry_date: string | null; total: number; currency_code: string | null };
 type Payment = { id: string; payment_number: string; customer_name: string; payment_mode: string | null; amount: number; currency_code: string | null; exchange_rate: number | null; date: string; reference_number: string | null };
 type Expense = { id: string; expense_number: string | null; account_name: string | null; vendor_name: string | null; status: string; date: string; total: number; sub_total: number; tax_total: number; currency_code: string | null; description: string | null };
@@ -42,7 +42,7 @@ type PurchaseOrder = { id: string; purchaseorder_number: string; vendor_name: st
 type VendorPayment = { id: string; payment_number: string | null; vendor_name: string; amount: number; date: string; payment_mode: string | null; currency_code: string | null };
 type Journal = { id: string; journal_date: string; entry_number: string | null; notes: string | null; total: number; line_items: string | null; currency_code: string | null; };
 
-type Module = "accounting" | "audit" | "compliance";
+type Module = "accounting" | "audit" | "compliance" | "analytics";
 type AcctSection = "invoices" | "sales_orders" | "estimates" | "payments" | "expenses" | "purchases" | "bills" | "vendor_payments" | "journals";
 type AuditSection = "overview" | "customers" | "so_match" | "po_match" | "gst" | "tds" | "findings";
 type CompSection = "client_report" | "summary" | "gst_filing" | "tds_filing" | "pt_pf" | "it_filing";
@@ -2518,6 +2518,195 @@ function ComplianceModule({ orgId, clientName, initSection = "" }: { orgId: stri
   );
 }
 
+// ─── Analytics: Charts ────────────────────────────────────────────────────────
+function Donut({ data, centerLabel, centerValue }: { data: { label: string; value: number; color: string }[]; centerLabel?: string; centerValue?: string }) {
+  const total = data.reduce((s, d) => s + d.value, 0) || 1;
+  const R = 56, C = 2 * Math.PI * R, cx = 75, cy = 75;
+  let acc = 0;
+  return (
+    <div className="flex items-center gap-5">
+      <svg viewBox="0 0 150 150" className="w-36 h-36 shrink-0">
+        <circle cx={cx} cy={cy} r={R} fill="none" stroke="#f4f4f5" strokeWidth="16" />
+        {data.map((d, i) => {
+          const dash = (d.value / total) * C;
+          const seg = (
+            <circle key={i} cx={cx} cy={cy} r={R} fill="none" stroke={d.color} strokeWidth="16"
+              strokeDasharray={`${dash} ${C - dash}`} strokeDashoffset={-acc}
+              transform={`rotate(-90 ${cx} ${cy})`} strokeLinecap="butt" />
+          );
+          acc += dash;
+          return seg;
+        })}
+        {centerValue && <text x={cx} y={cy - 4} textAnchor="middle" className="fill-black font-bold fin-num" fontSize="15">{centerValue}</text>}
+        {centerLabel && <text x={cx} y={cy + 13} textAnchor="middle" className="fill-zinc-400" fontSize="9">{centerLabel}</text>}
+      </svg>
+      <div className="space-y-2">
+        {data.map((d, i) => (
+          <div key={i} className="flex items-center gap-2 text-sm">
+            <span className="w-3 h-3 rounded-sm" style={{ background: d.color }} />
+            <span className="text-zinc-600">{d.label}</span>
+            <span className="font-semibold text-zinc-900 fin-num ml-auto pl-4">{Math.round((d.value / total) * 100)}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MiniBar({ value, max, color = "#000" }: { value: number; max: number; color?: string }) {
+  const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
+  return (
+    <div className="w-full h-2 rounded-full bg-zinc-100 overflow-hidden">
+      <div className="h-full rounded-full" style={{ width: `${pct}%`, background: color }} />
+    </div>
+  );
+}
+
+// ─── Analytics Module ─────────────────────────────────────────────────────────
+function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: string }) {
+  const [estimates, setEstimates] = useState<Estimate[]>([]);
+  const [salesOrders, setSalesOrders] = useState<(SalesOrder & { project_name?: string | null })[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [report, setReport] = useState<"quote_so" | "projects">("quote_so");
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([
+      supabase.from("estimates").select("*").eq("org_id", orgId),
+      supabase.from("sales_orders").select("*").eq("org_id", orgId),
+      supabase.from("finance_dashboard").select("*").eq("org_id", orgId),
+    ]).then(([est, so, inv]) => {
+      setEstimates(est.data || []); setSalesOrders(so.data || []); setInvoices(inv.data || []);
+      setLoading(false);
+    });
+  }, [orgId]);
+
+  if (loading) return <div className="text-center py-20 text-zinc-400">Loading analytics…</div>;
+
+  // ── Report 1: Quote vs SO ──────────────────────────────────────────────────
+  const soByQuote = new Map<string, SalesOrder>();
+  salesOrders.forEach(so => { if (so.reference_number) soByQuote.set(so.reference_number.trim(), so); });
+  const quoteRows = estimates.map(q => {
+    const so = soByQuote.get((q.estimate_number || "").trim());
+    return { quote: q, so, converted: !!so };
+  });
+  const totalQuoteVal = estimates.reduce((s, q) => s + (q.total || 0), 0);
+  const convertedQuotes = quoteRows.filter(r => r.converted);
+  const convertedVal = convertedQuotes.reduce((s, r) => s + (r.quote.total || 0), 0);
+  const soTotalVal = salesOrders.reduce((s, so) => s + (so.total || 0), 0);
+  const convRateCount = estimates.length ? Math.round((convertedQuotes.length / estimates.length) * 100) : 0;
+
+  // ── Report 2: Project summary ──────────────────────────────────────────────
+  const invBySo = new Map<string, { invoiced: number; received: number }>();
+  invoices.forEach(inv => {
+    const soid = (inv as any).salesorder_id;
+    if (!soid) return;
+    const cur = invBySo.get(soid) || { invoiced: 0, received: 0 };
+    cur.invoiced += inv.total || 0;
+    cur.received += (inv.total || 0) - (inv.balance || 0);
+    invBySo.set(soid, cur);
+  });
+  const projectRows = salesOrders.map(so => {
+    const agg = invBySo.get(so.id) || { invoiced: 0, received: 0 };
+    return {
+      id: so.id, customer: so.customer_name, project: so.project_name || "—",
+      soNumber: so.salesorder_number, soValue: so.total || 0,
+      invoiced: agg.invoiced, received: agg.received,
+    };
+  }).filter(r => !search ||
+    `${r.customer} ${r.project} ${r.soNumber}`.toLowerCase().includes(search.toLowerCase())
+  ).sort((a, b) => b.soValue - a.soValue);
+
+  const totSoVal = projectRows.reduce((s, r) => s + r.soValue, 0);
+  const totInvoiced = projectRows.reduce((s, r) => s + r.invoiced, 0);
+  const totReceived = projectRows.reduce((s, r) => s + r.received, 0);
+  const maxSo = Math.max(1, ...projectRows.map(r => r.soValue));
+  const noProjectName = salesOrders.length > 0 && salesOrders.every(so => !so.project_name);
+
+  return (
+    <div className="space-y-5">
+      {/* Report switch */}
+      <div className="flex gap-2">
+        {([["quote_so", "Quote → Sales Order"], ["projects", "Project Summary"]] as const).map(([k, label]) => (
+          <button key={k} onClick={() => setReport(k)}
+            className={`text-sm px-4 py-2 rounded-lg border transition ${report === k ? "bg-black text-white border-black" : "border-zinc-200 text-zinc-600 hover:bg-zinc-50"}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {report === "quote_so" && (
+        <div className="space-y-5">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Card label="Total Quotes" value={String(estimates.length)} sub={inr(totalQuoteVal)} />
+            <Card label="Converted to SO" value={String(convertedQuotes.length)} sub={inr(convertedVal)} color="text-emerald-600" />
+            <Card label="Conversion Rate" value={`${convRateCount}%`} sub="by count" color="text-blue-600" />
+            <Card label="Total SO Value" value={inr(soTotalVal)} color="text-violet-600" />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm">
+              <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-4">Quote Conversion (by count)</p>
+              <Donut centerValue={`${convRateCount}%`} centerLabel="converted"
+                data={[
+                  { label: "Converted", value: convertedQuotes.length, color: "#10b981" },
+                  { label: "Pending", value: estimates.length - convertedQuotes.length, color: "#e4e4e7" },
+                ]} />
+            </div>
+            <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm">
+              <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-4">Value: Quoted vs Converted</p>
+              <Donut centerValue={inr(convertedVal)} centerLabel="converted"
+                data={[
+                  { label: "Converted value", value: convertedVal, color: "#7c3aed" },
+                  { label: "Not converted", value: Math.max(0, totalQuoteVal - convertedVal), color: "#e4e4e7" },
+                ]} />
+            </div>
+          </div>
+          <Table cols={["Quote #", "Customer", "Quote Value", "Status", "Sales Order"]}
+            rows={quoteRows.sort((a, b) => (b.quote.total || 0) - (a.quote.total || 0)).map(r => [
+              <span className="font-mono text-xs text-zinc-500">{r.quote.estimate_number}</span>,
+              r.quote.customer_name,
+              <span className="font-semibold">{fmt(r.quote.total, r.quote.currency_code)}</span>,
+              r.converted ? <Badge s="confirmed" /> : <Badge s="pending" />,
+              r.so ? <span className="font-mono text-xs text-emerald-600">{r.so.salesorder_number}</span> : <span className="text-zinc-300">—</span>,
+            ])} empty="No quotes — sync from Zoho" />
+        </div>
+      )}
+
+      {report === "projects" && (
+        <div className="space-y-5">
+          {noProjectName && (
+            <div className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              ⚠ Project names not synced yet. Click <b>Sync Zoho</b> — the project name custom field is pulled during the detail enrichment passes.
+            </div>
+          )}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Card label="Sales Orders" value={String(projectRows.length)} />
+            <Card label="Total SO Value" value={inr(totSoVal)} color="text-violet-600" />
+            <Card label="Invoiced" value={inr(totInvoiced)} sub={`${totSoVal ? Math.round(totInvoiced / totSoVal * 100) : 0}% of SO`} color="text-blue-600" />
+            <Card label="Received" value={inr(totReceived)} sub={`${totInvoiced ? Math.round(totReceived / totInvoiced * 100) : 0}% of invoiced`} color="text-emerald-600" />
+          </div>
+          <div className="relative">
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search project, client, SO…"
+              className="w-full px-4 py-2.5 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-black transition" />
+          </div>
+          <Table cols={["Client", "Project", "SO #", "SO Value", "Invoiced", "Received", "Progress"]}
+            rows={projectRows.map(r => [
+              <span className="text-zinc-800">{r.customer}</span>,
+              <span className="text-zinc-600">{r.project}</span>,
+              <span className="font-mono text-xs text-zinc-500">{r.soNumber}</span>,
+              <span className="font-semibold">{inr(r.soValue)}</span>,
+              <span className="text-blue-600">{r.invoiced > 0 ? inr(r.invoiced) : "—"}</span>,
+              <span className="text-emerald-600">{r.received > 0 ? inr(r.received) : "—"}</span>,
+              <div className="w-28"><MiniBar value={r.received} max={r.soValue} color="#10b981" /></div>,
+            ])} empty="No sales orders — sync from Zoho" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Client Module ────────────────────────────────────────────────────────────
 function ClientModule({ client, onBack }: { client: Client; onBack: () => void }) {
   const getHashModule = (): Module => {
@@ -2567,6 +2756,7 @@ function ClientModule({ client, onBack }: { client: Client; onBack: () => void }
     { key: "accounting", label: "📒 Accounting", desc: "Sales · Purchases · Expenses · Journals" },
     { key: "audit", label: "🔍 Internal Audit", desc: "Matching · GST · TDS · Findings · MIS" },
     { key: "compliance", label: "📋 Compliance & Findings", desc: "Filing summaries · Client presentation · IT" },
+    { key: "analytics", label: "📊 Analytics", desc: "Quote vs SO · Project summary" },
   ];
 
   return (
@@ -2597,7 +2787,7 @@ function ClientModule({ client, onBack }: { client: Client; onBack: () => void }
       {/* Module selector */}
       <div className="border-b border-zinc-200 px-6 flex gap-0">
         {MODULES.map(m => (
-          <button key={m.key} onClick={() => { setModule(m.key); try { const id = window.location.hash.replace("#","").split("|")[0]; const defaults: Record<string,string> = {accounting:"invoices",audit:"overview",compliance:"summary"}; window.location.hash = id + "|" + m.key + "|" + (defaults[m.key]||""); } catch {} }}
+          <button key={m.key} onClick={() => { setModule(m.key); try { const id = window.location.hash.replace("#","").split("|")[0]; const defaults: Record<string,string> = {accounting:"invoices",audit:"overview",compliance:"summary",analytics:"quote_so"}; window.location.hash = id + "|" + m.key + "|" + (defaults[m.key]||""); } catch {} }}
             className={`flex flex-col px-5 py-3 border-b-2 -mb-px transition text-left ${module === m.key ? "border-black" : "border-transparent hover:border-zinc-300"}`}>
             <span className={`text-sm font-semibold ${module === m.key ? "text-black" : "text-zinc-400"}`}>{m.label}</span>
             <span className="text-xs text-zinc-400 mt-0.5">{m.desc}</span>
@@ -2610,6 +2800,7 @@ function ClientModule({ client, onBack }: { client: Client; onBack: () => void }
         {module === "accounting" && <AccountingModule orgId={orgId} initSection={initSection} />}
         {module === "audit" && <AuditModule orgId={orgId} initSection={initSection} />}
         {module === "compliance" && <ComplianceModule orgId={orgId} clientName={client.name} initSection={initSection} />}
+        {module === "analytics" && <AnalyticsModule orgId={orgId} clientName={client.name} />}
       </div>
     </div>
   );

@@ -187,6 +187,21 @@ function mapEstimate(e: any, orgId: string) {
   };
 }
 
+// Extract the "Project Name" custom field from a Sales Order detail object
+function extractProjectName(s: any): string | null {
+  if (Array.isArray(s.custom_fields)) {
+    const f = s.custom_fields.find((cf: any) => /project/i.test(cf?.label || "") && cf?.value);
+    if (f) return String(f.value);
+  }
+  // Some Zoho responses expose custom fields as cf_<slug>
+  for (const k of Object.keys(s)) {
+    if (/^cf_.*project/i.test(k) && s[k]) return String(s[k]);
+  }
+  return null;
+}
+
+// List version — no project_name (custom fields aren't in the list API), so the
+// column is preserved on existing rows during the list pass.
 function mapSalesOrder(s: any, orgId: string) {
   return {
     id: s.salesorder_id, org_id: orgId,
@@ -204,6 +219,11 @@ function mapSalesOrder(s: any, orgId: string) {
     currency_code: s.currency_code,
     created_time: s.created_time, last_modified_time: s.last_modified_time,
   };
+}
+
+// Detail version — adds the project_name custom field
+function mapSalesOrderDetail(s: any, orgId: string) {
+  return { ...mapSalesOrder(s, orgId), project_name: extractProjectName(s) };
 }
 
 function resolveTax(inv: any): number {
@@ -515,11 +535,12 @@ serve(async (req) => {
     // Reads remaining records (detail_synced=false) from our own DB — no Zoho
     // list calls — and fetches each one's detail to fill GST / ledger lines.
     if (phase === "enrich") {
-      const [invIds, billIds, expIds, jrnIds] = await Promise.all([
+      const [invIds, billIds, expIds, jrnIds, soIds] = await Promise.all([
         getUnsyncedIds(SUPABASE_URL, KEY, "finance_dashboard", orgId),
         getUnsyncedIds(SUPABASE_URL, KEY, "bills", orgId),
         getUnsyncedIds(SUPABASE_URL, KEY, "expenses", orgId),
         getUnsyncedIds(SUPABASE_URL, KEY, "journals", orgId),
+        getUnsyncedIds(SUPABASE_URL, KEY, "sales_orders", orgId),
       ]);
 
       const invRes = await enrichModule(SUPABASE_URL, KEY, "finance_dashboard", invIds,
@@ -530,9 +551,11 @@ serve(async (req) => {
         (id) => getDetail("expenses", id, "expense", (x) => mapExpense(x, orgId)), deadline);
       const jrnRes = await enrichModule(SUPABASE_URL, KEY, "journals", jrnIds,
         (id) => getDetail("journals", id, "journal", (x) => mapJournal(x, orgId)), deadline);
+      const soRes = await enrichModule(SUPABASE_URL, KEY, "sales_orders", soIds,
+        (id) => getDetail("salesorders", id, "salesorder", (x) => mapSalesOrderDetail(x, orgId)), deadline);
 
-      const enrichment = { invoices: invRes, bills: billRes, expenses: expRes, journals: jrnRes };
-      const more = [invRes, billRes, expRes, jrnRes].some(r => r.done < r.todo || r.capped);
+      const enrichment = { invoices: invRes, bills: billRes, expenses: expRes, journals: jrnRes, sales_orders: soRes };
+      const more = [invRes, billRes, expRes, jrnRes, soRes].some(r => r.done < r.todo || r.capped);
       console.log(`Enrich org ${orgId}:`, enrichment, "more:", more);
       return new Response(JSON.stringify({ success: true, enrichment, more }),
         { headers: { "Content-Type": "application/json", ...corsHeaders } });

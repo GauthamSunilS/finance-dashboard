@@ -2538,20 +2538,26 @@ function ClientModule({ client, onBack }: { client: Client; onBack: () => void }
 
   async function handleSync() {
     setSyncing(true); setSyncMsg(null);
+    const call = (extra: object) => fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/zoho-sync`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ org_id: orgId, ...extra }),
+    }).then(r => r.json());
     try {
-      // The function enriches GST/ledger details incrementally within a time
-      // budget. If it reports `more`, keep calling until everything is enriched.
-      let pass = 0;
-      while (true) {
+      // 1) List pass — pulls all records (fast, no per-record detail)
+      setSyncMsg("Syncing records…");
+      const list = await call({});
+      if (!list.success) { setSyncMsg(`✗ ${list.error || "Failed"}`); setSyncing(false); return; }
+      // 2) Enrich passes — fill GST + ledger detail, looping until done
+      let pass = 0; let done = false;
+      while (!done && pass < 30) {
         pass++;
-        setSyncMsg(pass > 1 ? `Syncing details… (pass ${pass})` : "Syncing…");
-        const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/zoho-sync`, { method: "POST", headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ org_id: orgId }) });
-        const r = await res.json();
-        if (!r.success) { setSyncMsg(`✗ ${r.error || "Failed"}`); break; }
-        if (r.more && pass < 12) continue;
-        setSyncMsg(`✓ Synced ${r.total_records} records`);
-        break;
+        setSyncMsg(`Fetching GST & ledger details… (pass ${pass})`);
+        const r = await call({ phase: "enrich" });
+        if (!r.success) { setSyncMsg(`✗ ${r.error || "Failed"}`); setSyncing(false); return; }
+        done = !r.more;
       }
+      setSyncMsg(`✓ Synced ${list.total_records} records`);
     } catch (e: any) { setSyncMsg(`✗ ${e.message}`); }
     setSyncing(false);
   }

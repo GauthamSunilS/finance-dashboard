@@ -28,42 +28,35 @@ async function getAccessToken(orgId: string): Promise<string> {
   return d.access_token;
 }
 
-// ─── Get IDs of records already enriched in the DB (paginated) ────────────────
-async function getEnrichedIds(sbUrl: string, key: string, table: string, filter: string): Promise<Set<string>> {
-  const ids = new Set<string>();
-  let from = 0;
-  while (true) {
-    const res = await fetch(`${sbUrl}/rest/v1/${table}?select=id&${filter}`, {
-      headers: { apikey: key, Authorization: `Bearer ${key}`, Range: `${from}-${from + 999}` },
-    });
-    if (!res.ok) break;
-    const rows = await res.json();
-    if (!Array.isArray(rows)) break;
-    for (const r of rows) ids.add(String(r.id));
-    if (rows.length < 1000) break;
-    from += 1000;
-  }
-  return ids;
+// ─── Read record IDs still needing detail enrichment, straight from our DB ────
+// (detail_synced=false). Avoids re-listing all modules from Zoho on every pass.
+async function getUnsyncedIds(sbUrl: string, key: string, table: string, orgId: string, limit = 1000): Promise<string[]> {
+  const res = await fetch(
+    `${sbUrl}/rest/v1/${table}?select=id&org_id=eq.${orgId}&detail_synced=eq.false&limit=${limit}`,
+    { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+  );
+  if (!res.ok) return [];
+  const rows = await res.json();
+  return Array.isArray(rows) ? rows.map((r: any) => String(r.id)) : [];
 }
 
-// ─── Incremental detail enrichment with shared time budget ────────────────────
-// Only fetches detail for records NOT already enriched. Stops at the deadline so
-// the function never times out — remaining records are picked up on the next sync.
-async function enrich<T>(
-  rawList: any[], idField: string, enriched: Set<string>,
-  fetchOne: (id: string) => Promise<T | null>, deadline: number, concurrency = 10
-): Promise<{ records: T[]; todo: number; done: number }> {
-  const todo = rawList.filter((r) => !enriched.has(String(r[idField])));
-  const records: T[] = [];
-  for (let i = 0; i < todo.length; i += concurrency) {
+// ─── Enrich one module: fetch detail for the given IDs within the time budget ──
+async function enrichModule(
+  sbUrl: string, key: string, table: string, ids: string[],
+  fetchOne: (id: string) => Promise<any | null>, deadline: number, concurrency = 10
+): Promise<{ todo: number; done: number; capped: boolean }> {
+  const records: any[] = [];
+  let i = 0;
+  for (; i < ids.length; i += concurrency) {
     if (Date.now() > deadline) break;
-    const batch = todo.slice(i, i + concurrency);
-    const settled = await Promise.allSettled(batch.map((r) => fetchOne(r[idField])));
+    const batch = ids.slice(i, i + concurrency);
+    const settled = await Promise.allSettled(batch.map((id) => fetchOne(id)));
     for (const s of settled) {
       if (s.status === "fulfilled" && s.value !== null) records.push(s.value);
     }
   }
-  return { records, todo: todo.length, done: records.length };
+  await upsert(sbUrl, key, table, records);
+  return { todo: ids.length, done: records.length, capped: ids.length >= 1000 };
 }
 
 // ─── Paginated Zoho fetcher ────────────────────────────────────────────────────
@@ -95,9 +88,13 @@ async function fetchAll(token: string, orgId: string, endpoint: string, listKey:
 }
 
 // ─── Supabase upsert ──────────────────────────────────────────────────────────
-async function upsert(supabaseUrl: string, key: string, table: string, rows: any[]): Promise<void> {
+// resolution "merge-duplicates" updates existing rows; "ignore-duplicates" only
+// inserts new rows (used for the list pass so enriched detail isn't clobbered).
+async function upsert(
+  supabaseUrl: string, key: string, table: string, rows: any[],
+  resolution: "merge-duplicates" | "ignore-duplicates" = "merge-duplicates"
+): Promise<void> {
   if (!rows.length) return;
-  // Batch in 500s to avoid payload limits
   for (let i = 0; i < rows.length; i += 500) {
     const batch = rows.slice(i, i + 500);
     const res = await fetch(`${supabaseUrl}/rest/v1/${table}`, {
@@ -106,7 +103,7 @@ async function upsert(supabaseUrl: string, key: string, table: string, rows: any
         "Content-Type": "application/json",
         apikey: key,
         Authorization: `Bearer ${key}`,
-        Prefer: "resolution=merge-duplicates",
+        Prefer: `resolution=${resolution}`,
       },
       body: JSON.stringify(batch),
     });
@@ -466,13 +463,53 @@ serve(async (req) => {
     const orgId: string = body.org_id;
     if (!orgId) throw new Error("org_id is required in request body");
 
+    const startedAt = Date.now();
     const token = await getAccessToken(orgId);
     const SUPABASE_URL = Deno.env.get("APP_SUPABASE_URL")!;
     const KEY = Deno.env.get("APP_SERVICE_ROLE_KEY")!;
+    const phase: string = body.phase || "list";
 
-    console.log(`Syncing org: ${orgId}`);
+    // Budget the detail work so the whole invocation stays under the 150s limit.
+    const deadline = startedAt + 120000;
 
-    // Fetch all modules from Zoho in parallel (max 200/page each)
+    const getDetail = async (endpoint: string, id: string, key: string, mapFn: (x: any) => any) => {
+      const r = await fetch(`https://www.zohoapis.in/books/v3/${endpoint}/${id}?organization_id=${orgId}`,
+        { headers: { Authorization: `Zoho-oauthtoken ${token}` } });
+      if (!r.ok) return null;
+      const d = await r.json();
+      // Always mark detail_synced so genuinely zero-tax records are not re-fetched
+      return d[key] ? { ...mapFn(d[key]), detail_synced: true } : null;
+    };
+
+    // ── ENRICH PASS ──────────────────────────────────────────────────────────
+    // Reads remaining records (detail_synced=false) from our own DB — no Zoho
+    // list calls — and fetches each one's detail to fill GST / ledger lines.
+    if (phase === "enrich") {
+      const [invIds, billIds, expIds, jrnIds] = await Promise.all([
+        getUnsyncedIds(SUPABASE_URL, KEY, "finance_dashboard", orgId),
+        getUnsyncedIds(SUPABASE_URL, KEY, "bills", orgId),
+        getUnsyncedIds(SUPABASE_URL, KEY, "expenses", orgId),
+        getUnsyncedIds(SUPABASE_URL, KEY, "journals", orgId),
+      ]);
+
+      const invRes = await enrichModule(SUPABASE_URL, KEY, "finance_dashboard", invIds,
+        (id) => getDetail("invoices", id, "invoice", (x) => mapInvoice(x, orgId)), deadline);
+      const billRes = await enrichModule(SUPABASE_URL, KEY, "bills", billIds,
+        (id) => getDetail("bills", id, "bill", (x) => mapBill(x, orgId)), deadline);
+      const expRes = await enrichModule(SUPABASE_URL, KEY, "expenses", expIds,
+        (id) => getDetail("expenses", id, "expense", (x) => mapExpense(x, orgId)), deadline);
+      const jrnRes = await enrichModule(SUPABASE_URL, KEY, "journals", jrnIds,
+        (id) => getDetail("journals", id, "journal", (x) => mapJournal(x, orgId)), deadline);
+
+      const enrichment = { invoices: invRes, bills: billRes, expenses: expRes, journals: jrnRes };
+      const more = [invRes, billRes, expRes, jrnRes].some(r => r.done < r.todo || r.capped);
+      console.log(`Enrich org ${orgId}:`, enrichment, "more:", more);
+      return new Response(JSON.stringify({ success: true, enrichment, more }),
+        { headers: { "Content-Type": "application/json", ...corsHeaders } });
+    }
+
+    // ── LIST PASS ────────────────────────────────────────────────────────────
+    console.log(`List sync org: ${orgId}`);
     const [
       contactsRaw, itemsRaw, estimatesRaw, salesOrdersRaw, invoicesRaw,
       salesReceiptsRaw, custPaymentsRaw, creditNotesRaw, expensesRaw,
@@ -498,7 +535,7 @@ serve(async (req) => {
       fetchAll(token, orgId, "taxpayments",     "tax_payments"),
     ]);
 
-    // ── Cheap modules: list data is complete, upsert directly ────────────────
+    // Cheap modules: list data is complete → full upsert
     await Promise.all([
       upsert(SUPABASE_URL, KEY, "contacts",          contactsRaw.map(c => mapContact(c, orgId))),
       upsert(SUPABASE_URL, KEY, "items",             itemsRaw.map(i => mapItem(i, orgId))),
@@ -515,51 +552,14 @@ serve(async (req) => {
       upsert(SUPABASE_URL, KEY, "tax_payments",      taxPaymentsRaw.map(t => mapTaxPayment(t, orgId))),
     ]);
 
-    // ── Detail-required modules: invoices/bills/expenses need tax breakdown,
-    //    journals need line_items. These only come from each record's detail
-    //    endpoint. Enrich incrementally — skip already-enriched records and stop
-    //    at the deadline so we never time out. Remaining records sync next click.
-    const orgFilter = `org_id=eq.${orgId}`;
-    const [invEnriched, billEnriched, expEnriched, jrnEnriched] = await Promise.all([
-      getEnrichedIds(SUPABASE_URL, KEY, "finance_dashboard", `${orgFilter}&tax_total=gt.0`),
-      getEnrichedIds(SUPABASE_URL, KEY, "bills",             `${orgFilter}&tax_total=gt.0`),
-      getEnrichedIds(SUPABASE_URL, KEY, "expenses",          `${orgFilter}&tax_total=gt.0`),
-      getEnrichedIds(SUPABASE_URL, KEY, "journals",          `${orgFilter}&line_items=not.is.null`),
+    // Detail modules: insert only NEW rows (ignore-duplicates) so existing
+    // enriched tax/line_items are never clobbered. New rows start detail_synced=false.
+    await Promise.all([
+      upsert(SUPABASE_URL, KEY, "finance_dashboard", invoicesRaw.map(i => mapInvoice(i, orgId)), "ignore-duplicates"),
+      upsert(SUPABASE_URL, KEY, "bills",             billsRaw.map(b => mapBill(b, orgId)), "ignore-duplicates"),
+      upsert(SUPABASE_URL, KEY, "expenses",          expensesRaw.map(e => mapExpense(e, orgId)), "ignore-duplicates"),
+      upsert(SUPABASE_URL, KEY, "journals",          journalsRaw.map(j => mapJournal(j, orgId)), "ignore-duplicates"),
     ]);
-
-    const getDetail = async (endpoint: string, id: string, key: string, mapFn: (x: any) => any) => {
-      const r = await fetch(`https://www.zohoapis.in/books/v3/${endpoint}/${id}?organization_id=${orgId}`,
-        { headers: { Authorization: `Zoho-oauthtoken ${token}` } });
-      if (!r.ok) return null;
-      const d = await r.json();
-      return d[key] ? mapFn(d[key]) : null;
-    };
-
-    // Shared time budget: leave ~20s of the 150s limit for upserts/overhead
-    const deadline = Date.now() + 125000;
-
-    // Process in priority order so remaining budget flows to the next module
-    const invRes = await enrich(invoicesRaw, "invoice_id", invEnriched,
-      (id) => getDetail("invoices", id, "invoice", (x) => mapInvoice(x, orgId)), deadline);
-    await upsert(SUPABASE_URL, KEY, "finance_dashboard", invRes.records);
-
-    const billRes = await enrich(billsRaw, "bill_id", billEnriched,
-      (id) => getDetail("bills", id, "bill", (x) => mapBill(x, orgId)), deadline);
-    await upsert(SUPABASE_URL, KEY, "bills", billRes.records);
-
-    const expRes = await enrich(expensesRaw, "expense_id", expEnriched,
-      (id) => getDetail("expenses", id, "expense", (x) => mapExpense(x, orgId)), deadline);
-    await upsert(SUPABASE_URL, KEY, "expenses", expRes.records);
-
-    const jrnRes = await enrich(journalsRaw, "journal_id", jrnEnriched,
-      (id) => getDetail("journals", id, "journal", (x) => mapJournal(x, orgId)), deadline);
-    await upsert(SUPABASE_URL, KEY, "journals", jrnRes.records);
-
-    const enrichment = {
-      invoices: invRes, bills: billRes, expenses: expRes, journals: jrnRes,
-    };
-    const more = invRes.done < invRes.todo || billRes.done < billRes.todo ||
-                 expRes.done < expRes.todo || jrnRes.done < jrnRes.todo;
 
     const summary = {
       contacts: contactsRaw.length, items: itemsRaw.length, estimates: estimatesRaw.length,
@@ -571,12 +571,12 @@ serve(async (req) => {
       journals: journalsRaw.length, bank_accounts: bankAccountsRaw.length,
       bank_transactions: bankTxRaw.length, tax_payments: taxPaymentsRaw.length,
     };
-
     const total = Object.values(summary).reduce((a, b) => a + b, 0);
-    console.log(`Sync for org ${orgId}:`, summary, "enrichment:", enrichment, "more:", more);
+    console.log(`List sync done org ${orgId}:`, summary);
 
+    // Always continue into enrich passes to fill GST / ledger detail
     return new Response(
-      JSON.stringify({ success: true, total_records: total, breakdown: summary, enrichment, more }),
+      JSON.stringify({ success: true, total_records: total, breakdown: summary, more: true }),
       { headers: { "Content-Type": "application/json", ...corsHeaders } }
     );
 

@@ -2772,6 +2772,7 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
     .map(([name, v]) => ({ name, ...v }))
     .sort((a, b) => b.invoiced - a.invoiced).slice(0, 15);
   const maxCust = Math.max(1, ...topCustomers.map(c => c.invoiced));
+  const custInvTotal = Array.from(custMap.values()).reduce((s, c) => s + c.invoiced, 0);
 
   // ── Report 5: Receivables ageing (outstanding balance by overdue days) ─────
   const buckets = [
@@ -3024,19 +3025,23 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
           </div>
           <div className="flex justify-end">
             <ExportButtons filename={`${clientName}-top-customers`} title={`${clientName} — Top Customers`}
-              columns={["Rank", "Customer", "Invoiced", "Received", "Invoices"]}
-              rows={topCustomers.map((c, i) => [i + 1, c.name, Math.round(c.invoiced), Math.round(c.received), c.count])} />
+              columns={["Rank", "Customer", "Invoiced", "% of total", "Received", "Invoices"]}
+              rows={topCustomers.map((c, i) => [i + 1, c.name, Math.round(c.invoiced), custInvTotal ? `${(c.invoiced / custInvTotal * 100).toFixed(1)}%` : "0%", Math.round(c.received), c.count])} />
           </div>
           <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm space-y-3">
             <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1">Top Customers by Invoiced Value</p>
-            {topCustomers.map((c, i) => (
-              <div key={i} className="flex items-center gap-3">
-                <span className="text-xs text-zinc-400 w-5 fin-num">{i + 1}</span>
-                <span className="text-sm text-zinc-700 w-52 truncate">{c.name}</span>
-                <div className="flex-1"><MiniBar value={c.invoiced} max={maxCust} color="#7c3aed" /></div>
-                <span className="text-sm font-semibold fin-num w-28 text-right">{inr(c.invoiced)}</span>
-              </div>
-            ))}
+            {topCustomers.map((c, i) => {
+              const pct = custInvTotal ? (c.invoiced / custInvTotal) * 100 : 0;
+              return (
+                <div key={i} className="flex items-center gap-3">
+                  <span className="text-xs text-zinc-400 w-5 fin-num">{i + 1}</span>
+                  <span className="text-sm text-zinc-700 w-52 truncate">{c.name}</span>
+                  <div className="flex-1"><MiniBar value={c.invoiced} max={maxCust} color="#7c3aed" /></div>
+                  <span className="text-sm font-semibold fin-num w-28 text-right">{inr(c.invoiced)}</span>
+                  <span className="text-xs text-zinc-400 fin-num w-12 text-right">{pct.toFixed(1)}%</span>
+                </div>
+              );
+            })}
             {!topCustomers.length && <p className="text-zinc-400 text-sm py-6 text-center">No invoices — sync from Zoho</p>}
           </div>
         </div>

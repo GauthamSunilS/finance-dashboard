@@ -2802,14 +2802,45 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
         ))}
       </div>
 
-      {/* FY / Month filter — applies to every report */}
-      <div className="flex items-center justify-between gap-3 flex-wrap border-y border-zinc-100 py-2">
+      {/* FY / Month / Status / Search — applies to every report */}
+      <div className="flex items-center gap-3 flex-wrap border-y border-zinc-100 py-2">
         <FYMonthFilter dates={allDates} fy={fy} month={month} onFY={setFy} onMonth={setMonth} />
-        {(fy !== "All" || month !== "All") && (
-          <span className="text-xs text-zinc-400">
-            Showing {fy !== "All" ? fy : "all FYs"}{month !== "All" ? ` · ${new Date(month + "-01").toLocaleDateString("en-IN", { month: "long", year: "numeric" })}` : ""}
-          </span>
+        {report === "quote_so" && (
+          <>
+            <span className="text-xs text-zinc-400 font-medium">Status:</span>
+            <select value={quoteView} onChange={e => setQuoteView(e.target.value as any)}
+              className="text-xs border border-zinc-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-black bg-white">
+              <option value="all">All ({quoteRows.length})</option>
+              <option value="converted">Converted ({convertedQuotes.length})</option>
+              <option value="pending">Pending ({pendingQuotes.length})</option>
+              <option value="void">Went Void ({voidQuotes.length})</option>
+            </select>
+          </>
         )}
+        {report === "projects" && (
+          <>
+            <span className="text-xs text-zinc-400 font-medium">Status:</span>
+            <select value={projView} onChange={e => setProjView(e.target.value as any)}
+              className="text-xs border border-zinc-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-black bg-white">
+              <option value="all">All ({projCounts.all})</option>
+              <option value="not_invoiced">Not Invoiced ({projCounts.not_invoiced})</option>
+              <option value="in_progress">In Progress ({projCounts.in_progress})</option>
+              <option value="completed">Completed ({projCounts.completed})</option>
+            </select>
+          </>
+        )}
+        {(report === "quote_so" || report === "projects" || report === "voids") && (
+          <div className="relative flex-1 min-w-[180px]">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+            <input value={search} onChange={e => setSearch(e.target.value)}
+              placeholder={report === "projects" ? "Search project or client…" : report === "voids" ? "Search void SO, customer, project…" : "Search quote #, customer, SO…"}
+              className="w-full pl-9 pr-4 py-1.5 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-black transition" />
+            {search && <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-black text-lg">×</button>}
+          </div>
+        )}
+        <span className="ml-auto text-xs text-zinc-400">
+          {fy !== "All" || month !== "All" ? `Showing ${fy !== "All" ? fy : "all FYs"}${month !== "All" ? ` · ${new Date(month + "-01").toLocaleDateString("en-IN", { month: "short", year: "numeric" })}` : ""}` : ""}
+        </span>
       </div>
 
       {report === "quote_so" && (
@@ -2845,22 +2876,8 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
                 ]} />
             </div>
           </div>
-          {/* Clickable status filters */}
-          <div className="flex gap-2 flex-wrap">
-            {([["all", "All", quoteRows.length], ["converted", "Converted", convertedQuotes.length], ["pending", "Pending", pendingQuotes.length], ["void", "Went Void", voidQuotes.length]] as const).map(([k, label, n]) => (
-              <button key={k} onClick={() => setQuoteView(k)}
-                className={`text-xs px-3 py-1.5 rounded-lg border transition ${quoteView === k ? "bg-black text-white border-black" : "border-zinc-200 text-zinc-600 hover:bg-zinc-50"}`}>
-                {label} <span className="fin-num opacity-70">({n})</span>
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="relative flex-1">
-              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search quote #, customer, SO…"
-                className="w-full pl-9 pr-4 py-2.5 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-black transition" />
-              {search && <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-black text-lg">×</button>}
-            </div>
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-zinc-400">{visibleQuoteRows.length} {quoteView === "all" ? "quotes" : quoteView === "void" ? "went void" : quoteView}</p>
             <ExportButtons filename={`${clientName}-quote-vs-so`} title={`${clientName} — Quote vs Sales Order`}
               columns={["Quote #", "Customer", "Quote Value", "Status", "Sales Order"]}
               rows={visibleQuoteRows.map(r => [r.quote.estimate_number || "", r.quote.customer_name || "", Math.round(r.quote.total || 0), r.status, r.so?.salesorder_number || ""])} />
@@ -2889,18 +2906,8 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
             <Card label="Invoiced" value={inr(totInvoiced)} sub={`${totSoVal ? Math.round(totInvoiced / totSoVal * 100) : 0}% of value`} color="text-blue-600" />
             <Card label="Received" value={inr(totReceived)} sub={`${totInvoiced ? Math.round(totReceived / totInvoiced * 100) : 0}% of invoiced`} color="text-emerald-600" />
           </div>
-          {/* Clickable status filters */}
-          <div className="flex gap-2 flex-wrap">
-            {([["all", "All", projCounts.all], ["not_invoiced", "Not Invoiced", projCounts.not_invoiced], ["in_progress", "In Progress", projCounts.in_progress], ["completed", "Completed", projCounts.completed]] as const).map(([k, label, n]) => (
-              <button key={k} onClick={() => setProjView(k)}
-                className={`text-xs px-3 py-1.5 rounded-lg border transition ${projView === k ? "bg-black text-white border-black" : "border-zinc-200 text-zinc-600 hover:bg-zinc-50"}`}>
-                {label} <span className="fin-num opacity-70">({n})</span>
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-3">
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search project or client…"
-              className="flex-1 px-4 py-2.5 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-black transition" />
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-zinc-400">{projectRows.length} projects</p>
             <ExportButtons filename={`${clientName}-project-summary`} title={`${clientName} — Project Summary`}
               columns={["Project", "Client", "SOs", "Taxable", "GST", "Total Value", "Invoiced", "Received"]}
               rows={projectRows.map(r => [r.project, r.customer, r.soCount, Math.round(r.taxable), Math.round(r.gst), Math.round(r.total), Math.round(r.invoiced), Math.round(r.received)])} />
@@ -3096,13 +3103,7 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
               <Card label="Void Value" value={inr(voidVal)} color="text-red-600" />
               <Card label="Showing" value={String(rows.length)} sub={inr(shownVal)} />
             </div>
-            <div className="flex items-center gap-3">
-              <div className="relative flex-1">
-                <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search void SO #, customer, project…"
-                  className="w-full pl-9 pr-4 py-2.5 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-black transition" />
-                {search && <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-black text-lg">×</button>}
-              </div>
+            <div className="flex justify-end">
               <ExportButtons filename={`${clientName}-void-sos`} title={`${clientName} — Void Sales Orders`}
                 columns={["SO #", "Project", "Customer", "Date", "Taxable", "GST", "Total"]}
                 rows={rows.map(so => [so.salesorder_number || "", so.project_name || "", so.customer_name || "", so.date || "", Math.round(so.sub_total || 0), Math.round(so.tax_total || 0), Math.round(so.total || 0)])} />

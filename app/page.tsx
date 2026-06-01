@@ -2595,24 +2595,6 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
-  const [syncState, setSyncState] = useState<Record<string, { syncing: boolean; msg: string | null }>>({});
-
-  async function handleClientSync(e: React.MouseEvent, client: Client) {
-    e.stopPropagation();
-    const orgId = client.org_id ?? client.id;
-    setSyncState(prev => ({ ...prev, [client.id]: { syncing: true, msg: null } }));
-    try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/zoho-sync`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ org_id: orgId }),
-      });
-      const r = await res.json();
-      setSyncState(prev => ({ ...prev, [client.id]: { syncing: false, msg: r.success ? `✓ ${r.total_records} records` : `✗ ${r.error || "Failed"}` } }));
-    } catch (err: any) {
-      setSyncState(prev => ({ ...prev, [client.id]: { syncing: false, msg: `✗ ${err.message}` } }));
-    }
-  }
 
   useEffect(() => {
     try { const hash = window.location.hash.replace("#","").split("|")[0]; if (hash) setActiveClientId(hash); } catch {}
@@ -2661,47 +2643,28 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         ) : (
           <div className="border border-zinc-200 rounded-xl overflow-hidden">
             <div className="grid grid-cols-12 bg-zinc-50 border-b border-zinc-200 px-6 py-2.5 text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-              <div className="col-span-5">Client Name</div>
-              <div className="col-span-2">Source</div>
-              <div className="col-span-4">Sync</div>
+              <div className="col-span-8">Client Name</div>
+              <div className="col-span-3">Source</div>
               <div className="col-span-1"></div>
             </div>
             {filtered.length === 0 ? (
               <div className="text-center py-10 text-zinc-400 text-sm">No clients found</div>
-            ) : filtered.map((client, i) => {
-              const s = syncState[client.id];
-              return (
-                <div key={client.id}
-                  className="w-full grid grid-cols-12 items-center px-6 py-4 border-b border-zinc-100 last:border-0 hover:bg-zinc-50 transition group cursor-pointer"
-                  onClick={() => { try { window.location.hash = client.id + "|accounting"; } catch {} setActiveClientId(client.id); }}>
-                  <div className="col-span-5 flex items-center gap-4">
-                    <span className="text-xs text-zinc-400 font-medium w-5 text-right tabular-nums">{String(i + 1).padStart(2, "0")}</span>
-                    <span className="font-semibold text-black text-sm group-hover:underline">{client.name}</span>
-                  </div>
-                  <div className="col-span-2">
-                    <span className={`text-xs font-medium px-2 py-0.5 rounded border ${client.source === "zoho" ? "border-blue-200 text-blue-600 bg-blue-50" : "border-purple-200 text-purple-600 bg-purple-50"}`}>
-                      {client.source?.toUpperCase()}
-                    </span>
-                  </div>
-                  <div className="col-span-4 flex items-center gap-2" onClick={e => e.stopPropagation()}>
-                    {client.source === "zoho" && (
-                      <>
-                        <button
-                          onClick={e => handleClientSync(e, client)}
-                          disabled={s?.syncing}
-                          className="text-xs px-2.5 py-1 rounded border border-zinc-300 hover:bg-zinc-100 transition disabled:opacity-50 whitespace-nowrap">
-                          {s?.syncing ? "Syncing..." : "⟳ Sync"}
-                        </button>
-                        {s?.msg && (
-                          <span className={`text-xs ${s.msg.startsWith("✓") ? "text-emerald-600" : "text-red-500"}`}>{s.msg}</span>
-                        )}
-                      </>
-                    )}
-                  </div>
-                  <div className="col-span-1 text-right text-zinc-300 group-hover:text-black transition">→</div>
+            ) : filtered.map((client, i) => (
+              <button key={client.id}
+                onClick={() => { try { window.location.hash = client.id + "|accounting"; } catch {} setActiveClientId(client.id); }}
+                className="w-full grid grid-cols-12 items-center px-6 py-4 text-left hover:bg-zinc-50 transition border-b border-zinc-100 last:border-0 group">
+                <div className="col-span-8 flex items-center gap-4">
+                  <span className="text-xs text-zinc-400 font-medium w-5 text-right tabular-nums">{String(i + 1).padStart(2, "0")}</span>
+                  <span className="font-semibold text-black text-sm group-hover:underline">{client.name}</span>
                 </div>
-              );
-            })}
+                <div className="col-span-3">
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded border ${client.source === "zoho" ? "border-blue-200 text-blue-600 bg-blue-50" : "border-purple-200 text-purple-600 bg-purple-50"}`}>
+                    {client.source?.toUpperCase()}
+                  </span>
+                </div>
+                <div className="col-span-1 text-right text-zinc-300 group-hover:text-black transition">→</div>
+              </button>
+            ))}
           </div>
         )}
       </div>

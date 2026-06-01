@@ -28,21 +28,42 @@ async function getAccessToken(orgId: string): Promise<string> {
   return d.access_token;
 }
 
-// ─── Concurrency-limited batch fetcher ───────────────────────────────────────
-async function fetchDetails<T>(
-  ids: string[], fetchOne: (id: string) => Promise<T | null>, concurrency = 10
-): Promise<T[]> {
-  const results: T[] = [];
-  for (let i = 0; i < ids.length; i += concurrency) {
-    const batch = ids.slice(i, i + concurrency);
-    const settled = await Promise.allSettled(batch.map(fetchOne));
-    for (const r of settled) {
-      // Only include successful fetches — failed ones are skipped so
-      // existing DB records are not overwritten with stale list data
-      if (r.status === "fulfilled" && r.value !== null) results.push(r.value);
+// ─── Get IDs of records already enriched in the DB (paginated) ────────────────
+async function getEnrichedIds(sbUrl: string, key: string, table: string, filter: string): Promise<Set<string>> {
+  const ids = new Set<string>();
+  let from = 0;
+  while (true) {
+    const res = await fetch(`${sbUrl}/rest/v1/${table}?select=id&${filter}`, {
+      headers: { apikey: key, Authorization: `Bearer ${key}`, Range: `${from}-${from + 999}` },
+    });
+    if (!res.ok) break;
+    const rows = await res.json();
+    if (!Array.isArray(rows)) break;
+    for (const r of rows) ids.add(String(r.id));
+    if (rows.length < 1000) break;
+    from += 1000;
+  }
+  return ids;
+}
+
+// ─── Incremental detail enrichment with shared time budget ────────────────────
+// Only fetches detail for records NOT already enriched. Stops at the deadline so
+// the function never times out — remaining records are picked up on the next sync.
+async function enrich<T>(
+  rawList: any[], idField: string, enriched: Set<string>,
+  fetchOne: (id: string) => Promise<T | null>, deadline: number, concurrency = 10
+): Promise<{ records: T[]; todo: number; done: number }> {
+  const todo = rawList.filter((r) => !enriched.has(String(r[idField])));
+  const records: T[] = [];
+  for (let i = 0; i < todo.length; i += concurrency) {
+    if (Date.now() > deadline) break;
+    const batch = todo.slice(i, i + concurrency);
+    const settled = await Promise.allSettled(batch.map((r) => fetchOne(r[idField])));
+    for (const s of settled) {
+      if (s.status === "fulfilled" && s.value !== null) records.push(s.value);
     }
   }
-  return results;
+  return { records, todo: todo.length, done: records.length };
 }
 
 // ─── Paginated Zoho fetcher ────────────────────────────────────────────────────
@@ -159,8 +180,8 @@ function mapSalesOrder(s: any, orgId: string) {
 }
 
 function resolveTax(inv: any): number {
-  // 1. Top-level tax_total
-  const t1 = Number(inv.tax_total || 0);
+  // 1. Top-level tax_total / tax_amount
+  const t1 = Number(inv.tax_total || inv.tax_amount || 0);
   if (t1 > 0) return t1;
   // 2. Sum taxes[] array (CGST + SGST + IGST entries)
   if (Array.isArray(inv.taxes) && inv.taxes.length > 0) {
@@ -252,8 +273,7 @@ function mapCreditNote(c: any, orgId: string) {
 }
 
 function mapExpense(e: any, orgId: string) {
-  // Zoho stores tax as tax_amount (inclusive) in detail view
-  const taxTotal = Number(e.tax_total || e.tax_amount || 0);
+  const taxTotal = resolveTax(e);
   const total = Number(e.total || 0);
   const subTotal = Number(e.sub_total || 0) || (total - taxTotal);
   return {
@@ -304,6 +324,8 @@ function mapPurchaseOrder(po: any, orgId: string) {
 }
 
 function mapBill(b: any, orgId: string) {
+  const taxTotal = resolveTax(b);
+  const total = Number(b.total || 0);
   return {
     id: b.bill_id, org_id: orgId,
     bill_number: b.bill_number,
@@ -312,10 +334,10 @@ function mapBill(b: any, orgId: string) {
     purchaseorder_id: b.purchaseorder_id || null,
     status: b.status, date: b.date,
     due_date: b.due_date || null,
-    sub_total: Number(b.sub_total || 0) || (Number(b.total || 0) - Number(b.tax_total || 0)),
+    sub_total: Number(b.sub_total || 0) || (total - taxTotal),
     discount_total: Number(b.discount_total || 0),
-    tax_total: Number(b.tax_total || 0),
-    total: Number(b.total || 0),
+    tax_total: taxTotal,
+    total,
     balance: Number(b.balance || 0),
     currency_code: b.currency_code,
     created_time: b.created_time, last_modified_time: b.last_modified_time,
@@ -476,76 +498,85 @@ serve(async (req) => {
       fetchAll(token, orgId, "taxpayments",     "tax_payments"),
     ]);
 
-    // Map all fetched data
-    const contacts       = contactsRaw.map(c  => mapContact(c, orgId));
-    const items          = itemsRaw.map(i      => mapItem(i, orgId));
-    const estimates      = estimatesRaw.map(e  => mapEstimate(e, orgId));
-    const salesOrders    = salesOrdersRaw.map(s => mapSalesOrder(s, orgId));
-    // Fetch full invoice details concurrently to get correct tax breakdown (CGST+SGST)
-    const invoices = await fetchDetails(
-      invoicesRaw.map((inv: any) => inv.invoice_id),
-      async (id) => {
-        const r = await fetch(
-          `https://www.zohoapis.in/books/v3/invoices/${id}?organization_id=${orgId}`,
-          { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
-        );
-        if (!r.ok) return null; // rate limited or error — skip, keep existing DB record
-        const d = await r.json();
-        if (!d.invoice) return null; // unexpected response — skip
-        return mapInvoice(d.invoice, orgId);
-      },
-      10
-    );
-    const salesReceipts  = salesReceiptsRaw.map(r => mapSalesReceipt(r, orgId));
-    const custPayments   = custPaymentsRaw.map(p => mapCustomerPayment(p, orgId));
-    const creditNotes    = creditNotesRaw.map(c => mapCreditNote(c, orgId));
-    const expenses       = expensesRaw.map(e   => mapExpense(e, orgId));
-    const purchaseOrders = purchaseOrdersRaw.map(po => mapPurchaseOrder(po, orgId));
-    const bills          = billsRaw.map(b      => mapBill(b, orgId));
-    const vendorPayments = vendorPaymentsRaw.map(p => mapVendorPayment(p, orgId));
-    const vendorCredits  = vendorCreditsRaw.map(c => mapVendorCredit(c, orgId));
-    const journals       = journalsRaw.map(j   => mapJournal(j, orgId));
-    const bankAccounts   = bankAccountsRaw.map(a => mapBankAccount(a, orgId));
-    const bankTx         = bankTxRaw.map(t     => mapBankTransaction(t, orgId));
-    const taxPayments    = taxPaymentsRaw.map(t => mapTaxPayment(t, orgId));
-
-    // Upsert all to Supabase in parallel
+    // ── Cheap modules: list data is complete, upsert directly ────────────────
     await Promise.all([
-      upsert(SUPABASE_URL, KEY, "contacts",          contacts),
-      upsert(SUPABASE_URL, KEY, "items",             items),
-      upsert(SUPABASE_URL, KEY, "estimates",         estimates),
-      upsert(SUPABASE_URL, KEY, "sales_orders",      salesOrders),
-      upsert(SUPABASE_URL, KEY, "finance_dashboard", invoices),
-      upsert(SUPABASE_URL, KEY, "sales_receipts",    salesReceipts),
-      upsert(SUPABASE_URL, KEY, "payments",          custPayments),
-      upsert(SUPABASE_URL, KEY, "credit_notes",      creditNotes),
-      upsert(SUPABASE_URL, KEY, "expenses",          expenses),
-      upsert(SUPABASE_URL, KEY, "purchase_orders",   purchaseOrders),
-      upsert(SUPABASE_URL, KEY, "bills",             bills),
-      upsert(SUPABASE_URL, KEY, "vendor_payments",   vendorPayments),
-      upsert(SUPABASE_URL, KEY, "vendor_credits",    vendorCredits),
-      upsert(SUPABASE_URL, KEY, "journals",          journals),
-      upsert(SUPABASE_URL, KEY, "bank_accounts",     bankAccounts),
-      upsert(SUPABASE_URL, KEY, "bank_transactions", bankTx),
-      upsert(SUPABASE_URL, KEY, "tax_payments",      taxPayments),
+      upsert(SUPABASE_URL, KEY, "contacts",          contactsRaw.map(c => mapContact(c, orgId))),
+      upsert(SUPABASE_URL, KEY, "items",             itemsRaw.map(i => mapItem(i, orgId))),
+      upsert(SUPABASE_URL, KEY, "estimates",         estimatesRaw.map(e => mapEstimate(e, orgId))),
+      upsert(SUPABASE_URL, KEY, "sales_orders",      salesOrdersRaw.map(s => mapSalesOrder(s, orgId))),
+      upsert(SUPABASE_URL, KEY, "sales_receipts",    salesReceiptsRaw.map(r => mapSalesReceipt(r, orgId))),
+      upsert(SUPABASE_URL, KEY, "payments",          custPaymentsRaw.map(p => mapCustomerPayment(p, orgId))),
+      upsert(SUPABASE_URL, KEY, "credit_notes",      creditNotesRaw.map(c => mapCreditNote(c, orgId))),
+      upsert(SUPABASE_URL, KEY, "purchase_orders",   purchaseOrdersRaw.map(po => mapPurchaseOrder(po, orgId))),
+      upsert(SUPABASE_URL, KEY, "vendor_payments",   vendorPaymentsRaw.map(p => mapVendorPayment(p, orgId))),
+      upsert(SUPABASE_URL, KEY, "vendor_credits",    vendorCreditsRaw.map(c => mapVendorCredit(c, orgId))),
+      upsert(SUPABASE_URL, KEY, "bank_accounts",     bankAccountsRaw.map(a => mapBankAccount(a, orgId))),
+      upsert(SUPABASE_URL, KEY, "bank_transactions", bankTxRaw.map(t => mapBankTransaction(t, orgId))),
+      upsert(SUPABASE_URL, KEY, "tax_payments",      taxPaymentsRaw.map(t => mapTaxPayment(t, orgId))),
     ]);
 
+    // ── Detail-required modules: invoices/bills/expenses need tax breakdown,
+    //    journals need line_items. These only come from each record's detail
+    //    endpoint. Enrich incrementally — skip already-enriched records and stop
+    //    at the deadline so we never time out. Remaining records sync next click.
+    const orgFilter = `org_id=eq.${orgId}`;
+    const [invEnriched, billEnriched, expEnriched, jrnEnriched] = await Promise.all([
+      getEnrichedIds(SUPABASE_URL, KEY, "finance_dashboard", `${orgFilter}&tax_total=gt.0`),
+      getEnrichedIds(SUPABASE_URL, KEY, "bills",             `${orgFilter}&tax_total=gt.0`),
+      getEnrichedIds(SUPABASE_URL, KEY, "expenses",          `${orgFilter}&tax_total=gt.0`),
+      getEnrichedIds(SUPABASE_URL, KEY, "journals",          `${orgFilter}&line_items=not.is.null`),
+    ]);
+
+    const getDetail = async (endpoint: string, id: string, key: string, mapFn: (x: any) => any) => {
+      const r = await fetch(`https://www.zohoapis.in/books/v3/${endpoint}/${id}?organization_id=${orgId}`,
+        { headers: { Authorization: `Zoho-oauthtoken ${token}` } });
+      if (!r.ok) return null;
+      const d = await r.json();
+      return d[key] ? mapFn(d[key]) : null;
+    };
+
+    // Shared time budget: leave ~20s of the 150s limit for upserts/overhead
+    const deadline = Date.now() + 125000;
+
+    // Process in priority order so remaining budget flows to the next module
+    const invRes = await enrich(invoicesRaw, "invoice_id", invEnriched,
+      (id) => getDetail("invoices", id, "invoice", (x) => mapInvoice(x, orgId)), deadline);
+    await upsert(SUPABASE_URL, KEY, "finance_dashboard", invRes.records);
+
+    const billRes = await enrich(billsRaw, "bill_id", billEnriched,
+      (id) => getDetail("bills", id, "bill", (x) => mapBill(x, orgId)), deadline);
+    await upsert(SUPABASE_URL, KEY, "bills", billRes.records);
+
+    const expRes = await enrich(expensesRaw, "expense_id", expEnriched,
+      (id) => getDetail("expenses", id, "expense", (x) => mapExpense(x, orgId)), deadline);
+    await upsert(SUPABASE_URL, KEY, "expenses", expRes.records);
+
+    const jrnRes = await enrich(journalsRaw, "journal_id", jrnEnriched,
+      (id) => getDetail("journals", id, "journal", (x) => mapJournal(x, orgId)), deadline);
+    await upsert(SUPABASE_URL, KEY, "journals", jrnRes.records);
+
+    const enrichment = {
+      invoices: invRes, bills: billRes, expenses: expRes, journals: jrnRes,
+    };
+    const more = invRes.done < invRes.todo || billRes.done < billRes.todo ||
+                 expRes.done < expRes.todo || jrnRes.done < jrnRes.todo;
+
     const summary = {
-      contacts: contacts.length, items: items.length, estimates: estimates.length,
-      sales_orders: salesOrders.length, invoices: invoices.length,
-      sales_receipts: salesReceipts.length, payments: custPayments.length,
-      credit_notes: creditNotes.length, expenses: expenses.length,
-      purchase_orders: purchaseOrders.length, bills: bills.length,
-      vendor_payments: vendorPayments.length, vendor_credits: vendorCredits.length,
-      journals: journals.length, bank_accounts: bankAccounts.length,
-      bank_transactions: bankTx.length, tax_payments: taxPayments.length,
+      contacts: contactsRaw.length, items: itemsRaw.length, estimates: estimatesRaw.length,
+      sales_orders: salesOrdersRaw.length, invoices: invoicesRaw.length,
+      sales_receipts: salesReceiptsRaw.length, payments: custPaymentsRaw.length,
+      credit_notes: creditNotesRaw.length, expenses: expensesRaw.length,
+      purchase_orders: purchaseOrdersRaw.length, bills: billsRaw.length,
+      vendor_payments: vendorPaymentsRaw.length, vendor_credits: vendorCreditsRaw.length,
+      journals: journalsRaw.length, bank_accounts: bankAccountsRaw.length,
+      bank_transactions: bankTxRaw.length, tax_payments: taxPaymentsRaw.length,
     };
 
     const total = Object.values(summary).reduce((a, b) => a + b, 0);
-    console.log(`Sync complete for org ${orgId}:`, summary);
+    console.log(`Sync for org ${orgId}:`, summary, "enrichment:", enrichment, "more:", more);
 
     return new Response(
-      JSON.stringify({ success: true, total_records: total, breakdown: summary }),
+      JSON.stringify({ success: true, total_records: total, breakdown: summary, enrichment, more }),
       { headers: { "Content-Type": "application/json", ...corsHeaders } }
     );
 

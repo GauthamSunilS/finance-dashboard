@@ -37,7 +37,7 @@ type SalesOrder = { id: string; salesorder_number: string; customer_name: string
 type Estimate = { id: string; estimate_number: string; customer_name: string; status: string; date: string; expiry_date: string | null; total: number; currency_code: string | null };
 type Payment = { id: string; payment_number: string; customer_name: string; payment_mode: string | null; amount: number; currency_code: string | null; exchange_rate: number | null; date: string; reference_number: string | null };
 type Expense = { id: string; expense_number: string | null; account_name: string | null; vendor_name: string | null; status: string; date: string; total: number; sub_total: number; tax_total: number; currency_code: string | null; description: string | null };
-type Bill = { id: string; bill_number: string; vendor_name: string; status: string; date: string; due_date: string | null; total: number; balance: number; currency_code: string | null; purchaseorder_id: string | null };
+type Bill = { id: string; bill_number: string; vendor_name: string; status: string; date: string; due_date: string | null; sub_total: number; tax_total: number; total: number; balance: number; currency_code: string | null; purchaseorder_id: string | null };
 type PurchaseOrder = { id: string; purchaseorder_number: string; vendor_name: string; status: string; date: string; total: number; billed_status: string | null; received_status: string | null; currency_code: string | null };
 type VendorPayment = { id: string; payment_number: string | null; vendor_name: string; amount: number; date: string; payment_mode: string | null; currency_code: string | null };
 type Journal = { id: string; journal_date: string; entry_number: string | null; notes: string | null; total: number; line_items: string | null; currency_code: string | null; };
@@ -891,10 +891,12 @@ function AccountingModule({ orgId, initSection = "" }: { orgId: string; initSect
               <Card label="Outstanding" value={fmt(base.reduce((s, i) => s + i.balance, 0), base[0]?.currency_code)} color="text-amber-600" onClick={() => toggle("outstanding")} active={invFilter === "outstanding"} />
               <Card label="Paid" value={String(base.filter(b => b.status === "paid").length)} color="text-emerald-600" onClick={() => toggle("paid")} active={invFilter === "paid"} />
             </div>
-            <Table cols={["Bill #", "Vendor", "Date", "Due", "Status", "Total", "Balance", ""]}
+            <Table cols={["Bill #", "Vendor", "Date", "Due", "Status", "Taxable", "GST", "Total", "Balance"]}
               rows={d.map(b => [
                 <span className="font-mono text-xs text-zinc-500">{b.bill_number}</span>,
                 b.vendor_name, fdate(b.date), fdate(b.due_date), <Badge s={b.status} />,
+                <span className="text-zinc-600">{fmt(b.sub_total || (b.total - (b.tax_total || 0)), b.currency_code)}</span>,
+                b.tax_total > 0 ? <span className="text-blue-600">{fmt(b.tax_total, b.currency_code)}</span> : <span className="text-zinc-300">—</span>,
                 <span className="font-semibold">{fmt(b.total, b.currency_code)}</span>,
                 <span className={b.balance > 0 ? "font-semibold text-amber-600" : "text-emerald-600"}>{b.balance > 0 ? fmt(b.balance, b.currency_code) : "Paid"}</span>,
               ])} empty="No bills — sync from Zoho" />
@@ -2530,9 +2532,19 @@ function ClientModule({ client, onBack }: { client: Client; onBack: () => void }
   async function handleSync() {
     setSyncing(true); setSyncMsg(null);
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/zoho-sync`, { method: "POST", headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ org_id: orgId }) });
-      const r = await res.json();
-      setSyncMsg(r.success ? `✓ Synced ${r.total_records} records` : `✗ ${r.error || "Failed"}`);
+      // The function enriches GST/ledger details incrementally within a time
+      // budget. If it reports `more`, keep calling until everything is enriched.
+      let pass = 0;
+      while (true) {
+        pass++;
+        setSyncMsg(pass > 1 ? `Syncing details… (pass ${pass})` : "Syncing…");
+        const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/zoho-sync`, { method: "POST", headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ org_id: orgId }) });
+        const r = await res.json();
+        if (!r.success) { setSyncMsg(`✗ ${r.error || "Failed"}`); break; }
+        if (r.more && pass < 12) continue;
+        setSyncMsg(`✓ Synced ${r.total_records} records`);
+        break;
+      }
     } catch (e: any) { setSyncMsg(`✗ ${e.message}`); }
     setSyncing(false);
   }

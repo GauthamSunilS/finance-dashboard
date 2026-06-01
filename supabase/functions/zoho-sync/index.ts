@@ -30,15 +30,17 @@ async function getAccessToken(orgId: string): Promise<string> {
 
 // ─── Concurrency-limited batch fetcher ───────────────────────────────────────
 async function fetchDetails<T>(
-  ids: string[], fetchOne: (id: string) => Promise<T>, fallback: (id: string) => T, concurrency = 15
+  ids: string[], fetchOne: (id: string) => Promise<T | null>, concurrency = 10
 ): Promise<T[]> {
   const results: T[] = [];
   for (let i = 0; i < ids.length; i += concurrency) {
     const batch = ids.slice(i, i + concurrency);
     const settled = await Promise.allSettled(batch.map(fetchOne));
-    settled.forEach((r, j) => {
-      results.push(r.status === "fulfilled" ? r.value : fallback(batch[j]));
-    });
+    for (const r of settled) {
+      // Only include successful fetches — failed ones are skipped so
+      // existing DB records are not overwritten with stale list data
+      if (r.status === "fulfilled" && r.value !== null) results.push(r.value);
+    }
   }
   return results;
 }
@@ -480,7 +482,6 @@ serve(async (req) => {
     const estimates      = estimatesRaw.map(e  => mapEstimate(e, orgId));
     const salesOrders    = salesOrdersRaw.map(s => mapSalesOrder(s, orgId));
     // Fetch full invoice details concurrently to get correct tax breakdown (CGST+SGST)
-    const invoiceMap = new Map(invoicesRaw.map((inv: any) => [inv.invoice_id, inv]));
     const invoices = await fetchDetails(
       invoicesRaw.map((inv: any) => inv.invoice_id),
       async (id) => {
@@ -488,11 +489,12 @@ serve(async (req) => {
           `https://www.zohoapis.in/books/v3/invoices/${id}?organization_id=${orgId}`,
           { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
         );
+        if (!r.ok) return null; // rate limited or error — skip, keep existing DB record
         const d = await r.json();
-        return mapInvoice(d.invoice || invoiceMap.get(id), orgId);
+        if (!d.invoice) return null; // unexpected response — skip
+        return mapInvoice(d.invoice, orgId);
       },
-      (id) => mapInvoice(invoiceMap.get(id), orgId),
-      50
+      10
     );
     const salesReceipts  = salesReceiptsRaw.map(r => mapSalesReceipt(r, orgId));
     const custPayments   = custPaymentsRaw.map(p => mapCustomerPayment(p, orgId));

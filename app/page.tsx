@@ -2961,24 +2961,59 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
         </div>
       )}
 
-      {report === "revenue" && (
+      {report === "revenue" && (() => {
+        const revMax = Math.max(1, ...revenueBars.map(b => b.value));
+        const nonZero = revenueBars.filter(b => b.value > 0);
+        const lowVal = nonZero.length ? Math.min(...nonZero.map(b => b.value)) : 0;
+        const lowMonth = nonZero.find(b => b.value === lowVal);
+        const fullMonth = (f: string) => f && f !== "—" ? new Date(f + "-01").toLocaleDateString("en-IN", { month: "long", year: "numeric" }) : "—";
+        return (
         <div className="space-y-5">
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Card label="Invoiced (last 12 mo)" value={inr(revenueTotal)} color="text-violet-600" />
             <Card label="Monthly Average" value={inr(revenueAvg)} color="text-blue-600" />
-            <Card label="Best Month" value={inr(bestMonth.value)} sub={bestMonth.full !== "—" ? new Date(bestMonth.full + "-01").toLocaleDateString("en-IN", { month: "long", year: "numeric" }) : "—"} color="text-emerald-600" />
+            <Card label="Peak Season" value={inr(bestMonth.value)} sub={fullMonth(bestMonth.full)} color="text-emerald-600" />
+            <Card label="Dry Season" value={lowMonth ? inr(lowVal) : "—"} sub={lowMonth ? fullMonth(lowMonth.full) : "—"} color="text-amber-600" />
           </div>
           <div className="flex justify-end">
             <ExportButtons filename={`${clientName}-revenue-trend`} title={`${clientName} — Revenue Trend`}
-              columns={["Month", "Invoiced"]}
-              rows={revenueBars.map(b => [b.full, Math.round(b.value)])} />
+              columns={["Month", "Invoiced", "% of total"]}
+              rows={revenueBars.map(b => [b.full, Math.round(b.value), revenueTotal ? `${(b.value / revenueTotal * 100).toFixed(1)}%` : "0%"])} />
           </div>
           <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm">
-            <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">Monthly Invoiced Revenue</p>
-            {revenueBars.length ? <VBars data={revenueBars} color="#111" /> : <p className="text-zinc-400 text-sm py-10 text-center">No invoices to chart</p>}
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Monthly Invoiced Revenue</p>
+              <div className="flex gap-3 text-[10px] text-zinc-400">
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" />Peak</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-500" />Dry</span>
+              </div>
+            </div>
+            {revenueBars.length ? (
+              <div className="space-y-2">
+                {revenueBars.map((b, i) => {
+                  const pct = revenueTotal ? (b.value / revenueTotal) * 100 : 0;
+                  const isPeak = b.value === revMax && b.value > 0;
+                  const isLow = b.value === lowVal && b.value > 0 && nonZero.length > 1;
+                  const color = isPeak ? "#10b981" : isLow ? "#f59e0b" : "#18181b";
+                  return (
+                    <div key={i} className="flex items-center gap-3">
+                      <span className="text-xs text-zinc-500 w-24 shrink-0">{fullMonth(b.full)}</span>
+                      <div className="flex-1 h-5 rounded bg-zinc-100 overflow-hidden">
+                        <div className="h-full rounded flex items-center justify-end pr-2" style={{ width: `${Math.max(3, (b.value / revMax) * 100)}%`, background: color }}>
+                          {pct >= 8 && <span className="text-[10px] text-white font-medium fin-num">{pct.toFixed(1)}%</span>}
+                        </div>
+                      </div>
+                      <span className="text-sm font-semibold fin-num w-28 text-right">{inr(b.value)}</span>
+                      <span className="text-xs text-zinc-400 fin-num w-12 text-right">{pct.toFixed(1)}%</span>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : <p className="text-zinc-400 text-sm py-10 text-center">No invoices to chart</p>}
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {report === "customers" && (
         <div className="space-y-5">

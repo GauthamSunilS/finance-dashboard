@@ -60,9 +60,9 @@ async function getAccessToken(orgId: string): Promise<string> {
 
 // ─── Read record IDs still needing detail enrichment, straight from our DB ────
 // (detail_synced=false). Avoids re-listing all modules from Zoho on every pass.
-async function getUnsyncedIds(sbUrl: string, key: string, table: string, orgId: string, limit = 1000): Promise<string[]> {
+async function getUnsyncedIds(sbUrl: string, key: string, table: string, orgId: string, limit = 1000, flagCol = "detail_synced"): Promise<string[]> {
   const res = await fetch(
-    `${sbUrl}/rest/v1/${table}?select=id&org_id=eq.${orgId}&detail_synced=eq.false&limit=${limit}`,
+    `${sbUrl}/rest/v1/${table}?select=id&org_id=eq.${orgId}&${flagCol}=eq.false&limit=${limit}`,
     { headers: { apikey: key, Authorization: `Bearer ${key}` } }
   );
   if (!res.ok) return [];
@@ -87,6 +87,35 @@ async function enrichModule(
   }
   await upsert(sbUrl, key, table, records);
   return { todo: ids.length, done: records.length, capped: ids.length >= 1000 };
+}
+
+// ─── Enrich invoices: store header (tax) + line items (Items Sold report) ──────
+async function enrichInvoices(
+  sbUrl: string, key: string, ids: string[], token: string, orgId: string, deadline: number, concurrency = 10
+): Promise<{ todo: number; done: number; capped: boolean }> {
+  const invRecords: any[] = [];
+  const itemRecords: any[] = [];
+  for (let i = 0; i < ids.length; i += concurrency) {
+    if (Date.now() > deadline) break;
+    const batch = ids.slice(i, i + concurrency);
+    const settled = await Promise.allSettled(batch.map(async (id) => {
+      const r = await fetch(`https://www.zohoapis.in/books/v3/invoices/${id}?organization_id=${orgId}`,
+        { headers: { Authorization: `Zoho-oauthtoken ${token}` } });
+      if (!r.ok) return null;
+      const d = await r.json();
+      return d.invoice || null;
+    }));
+    for (const s of settled) {
+      if (s.status === "fulfilled" && s.value) {
+        const inv = s.value;
+        invRecords.push({ ...mapInvoice(inv, orgId), detail_synced: true, items_synced: true });
+        for (const li of (inv.line_items || [])) itemRecords.push(mapInvoiceItem(li, inv, orgId));
+      }
+    }
+  }
+  await upsert(sbUrl, key, "finance_dashboard", invRecords);
+  await upsert(sbUrl, key, "invoice_items", itemRecords);
+  return { todo: ids.length, done: invRecords.length, capped: ids.length >= 1000 };
 }
 
 // ─── Paginated Zoho fetcher ────────────────────────────────────────────────────
@@ -265,6 +294,24 @@ function mapInvoice(inv: any, orgId: string) {
     balance: Number(inv.balance || 0),
     currency_code: inv.currency_code || "INR",
     created_time: inv.created_time, last_modified_time: inv.last_modified_time,
+  };
+}
+
+// One row per invoice line item — powers the Items Sold report
+function mapInvoiceItem(li: any, inv: any, orgId: string) {
+  const qty = Number(li.quantity || 0);
+  const rate = Number(li.rate || 0);
+  return {
+    id: `${inv.invoice_id}_${li.line_item_id || li.item_id || Math.random().toString(36).slice(2)}`,
+    org_id: orgId,
+    invoice_id: inv.invoice_id,
+    invoice_number: inv.invoice_number || null,
+    date: inv.date || null,
+    item_id: li.item_id || null,
+    name: li.name || li.description || "—",
+    quantity: qty,
+    rate,
+    amount: Number(li.item_total ?? li.total ?? (qty * rate) ?? 0),
   };
 }
 
@@ -536,15 +583,14 @@ serve(async (req) => {
     // list calls — and fetches each one's detail to fill GST / ledger lines.
     if (phase === "enrich") {
       const [invIds, billIds, expIds, jrnIds, soIds] = await Promise.all([
-        getUnsyncedIds(SUPABASE_URL, KEY, "finance_dashboard", orgId),
+        getUnsyncedIds(SUPABASE_URL, KEY, "finance_dashboard", orgId, 1000, "items_synced"),
         getUnsyncedIds(SUPABASE_URL, KEY, "bills", orgId),
         getUnsyncedIds(SUPABASE_URL, KEY, "expenses", orgId),
         getUnsyncedIds(SUPABASE_URL, KEY, "journals", orgId),
         getUnsyncedIds(SUPABASE_URL, KEY, "sales_orders", orgId),
       ]);
 
-      const invRes = await enrichModule(SUPABASE_URL, KEY, "finance_dashboard", invIds,
-        (id) => getDetail("invoices", id, "invoice", (x) => mapInvoice(x, orgId)), deadline);
+      const invRes = await enrichInvoices(SUPABASE_URL, KEY, invIds, token, orgId, deadline);
       const billRes = await enrichModule(SUPABASE_URL, KEY, "bills", billIds,
         (id) => getDetail("bills", id, "bill", (x) => mapBill(x, orgId)), deadline);
       const expRes = await enrichModule(SUPABASE_URL, KEY, "expenses", expIds,

@@ -2621,8 +2621,9 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
   const [estimates, setEstimates] = useState<Estimate[]>([]);
   const [salesOrders, setSalesOrders] = useState<(SalesOrder & { project_name?: string | null })[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [invoiceItems, setInvoiceItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [report, setReport] = useState<"quote_so" | "projects" | "revenue" | "customers" | "ageing" | "voids">("quote_so");
+  const [report, setReport] = useState<"quote_so" | "projects" | "revenue" | "customers" | "ageing" | "voids" | "items">("quote_so");
   const [search, setSearch] = useState("");
   const [fy, setFy] = useState("All");
   const [month, setMonth] = useState("All");
@@ -2636,12 +2637,26 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
 
   useEffect(() => {
     setLoading(true);
+    // invoice_items can exceed the 1000-row cap — page through it
+    const loadAllItems = async () => {
+      let all: any[] = []; let from = 0;
+      while (true) {
+        const { data } = await supabase.from("invoice_items").select("*").eq("org_id", orgId).range(from, from + 999);
+        if (!data || !data.length) break;
+        all = all.concat(data);
+        if (data.length < 1000) break;
+        from += 1000;
+      }
+      return all;
+    };
     Promise.all([
       supabase.from("estimates").select("*").eq("org_id", orgId),
       supabase.from("sales_orders").select("*").eq("org_id", orgId),
       supabase.from("finance_dashboard").select("*").eq("org_id", orgId),
-    ]).then(([est, so, inv]) => {
+      loadAllItems(),
+    ]).then(([est, so, inv, items]) => {
       setEstimates(est.data || []); setSalesOrders(so.data || []); setInvoices(inv.data || []);
+      setInvoiceItems(items || []);
       setLoading(false);
     });
   }, [orgId]);
@@ -2806,6 +2821,45 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
     .filter(so => !search || `${so.salesorder_number} ${so.customer_name} ${so.project_name || ""}`.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => (b.total || 0) - (a.total || 0));
 
+  // ── Items Sold ─────────────────────────────────────────────────────────────
+  const fItems = filterByFYMonth(invoiceItems, fy, month);
+  const itemAgg = new Map<string, { name: string; qty: number; amount: number; invoices: Set<string> }>();
+  fItems.forEach(li => {
+    const name = li.name || "—";
+    const e = itemAgg.get(name) || { name, qty: 0, amount: 0, invoices: new Set<string>() };
+    e.qty += Number(li.quantity || 0);
+    e.amount += Number(li.amount || 0);
+    if (li.invoice_id) e.invoices.add(li.invoice_id);
+    itemAgg.set(name, e);
+  });
+  const itemsRanked = Array.from(itemAgg.values())
+    .map(e => ({ ...e, invCount: e.invoices.size }))
+    .filter(e => !search || e.name.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => b.qty - a.qty);
+  const topItems = itemsRanked.slice(0, 10);
+  const itemsTotalQty = itemsRanked.reduce((s, e) => s + e.qty, 0);
+  const itemsTotalVal = itemsRanked.reduce((s, e) => s + e.amount, 0);
+  const maxItemQty = Math.max(1, ...topItems.map(e => e.qty));
+
+  // Best-selling item per month (by qty)
+  const monthItemMap = new Map<string, Map<string, { qty: number; amount: number }>>();
+  fItems.forEach(li => {
+    if (!li.date) return;
+    const m = String(li.date).slice(0, 7);
+    const inner = monthItemMap.get(m) || new Map();
+    const cur = inner.get(li.name || "—") || { qty: 0, amount: 0 };
+    cur.qty += Number(li.quantity || 0); cur.amount += Number(li.amount || 0);
+    inner.set(li.name || "—", cur);
+    monthItemMap.set(m, inner);
+  });
+  const monthlyTopItems = Array.from(monthItemMap.entries())
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([m, inner]) => {
+      let best = { name: "—", qty: 0, amount: 0 };
+      inner.forEach((v, name) => { if (v.qty > best.qty) best = { name, qty: v.qty, amount: v.amount }; });
+      return { month: m, ...best };
+    });
+
   // ── Export config for the active report (CSV/PDF in the top bar) ────────────
   const fullMonthName = (f: string) => f && f !== "—" ? new Date(f + "-01").toLocaleDateString("en-IN", { month: "long", year: "numeric" }) : "—";
   let exportConf: { filename: string; title: string; columns: string[]; rows: (string | number)[][] };
@@ -2829,6 +2883,10 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
     exportConf = { filename: `${clientName}-receivables-ageing`, title: `${clientName} — Receivables Ageing`,
       columns: ["Invoice #", "Customer", "Date", "Due Date", "Days Overdue", "Total", "Balance", "Bucket"],
       rows: ageRows.map(r => [r.inv.invoice_number || "", r.inv.customer_name || "", r.inv.date || "", r.inv.due_date || "", r.days > 0 ? r.days : 0, Math.round(r.inv.total || 0), Math.round(r.inv.balance || 0), r.bucket]) };
+  } else if (report === "items") {
+    exportConf = { filename: `${clientName}-items-sold`, title: `${clientName} — Items Sold`,
+      columns: ["Rank", "Item", "Qty Sold", "Value", "% of qty", "Invoices"],
+      rows: itemsRanked.map((e, i) => [i + 1, e.name, e.qty, Math.round(e.amount), itemsTotalQty ? `${(e.qty / itemsTotalQty * 100).toFixed(1)}%` : "0%", e.invCount]) };
   } else {
     exportConf = { filename: `${clientName}-void-sos`, title: `${clientName} — Void Sales Orders`,
       columns: ["SO #", "Project", "Customer", "Date", "Taxable", "GST", "Total"],
@@ -2839,7 +2897,7 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
     <div className="space-y-5">
       {/* Report switch */}
       <div className="flex gap-2 flex-wrap">
-        {([["quote_so", "Quote → Sales Order"], ["projects", "Project Summary"], ["revenue", "Revenue Trend"], ["customers", "Top Customers"], ["ageing", "Receivables Ageing"], ["voids", "Void SOs"]] as const).map(([k, label]) => (
+        {([["quote_so", "Quote → Sales Order"], ["projects", "Project Summary"], ["revenue", "Revenue Trend"], ["customers", "Top Customers"], ["ageing", "Receivables Ageing"], ["items", "Items Sold"], ["voids", "Void SOs"]] as const).map(([k, label]) => (
           <button key={k} onClick={() => setReport(k)}
             className={`text-sm px-4 py-2 rounded-lg border transition ${report === k ? "bg-black text-white border-black" : "border-zinc-200 text-zinc-600 hover:bg-zinc-50"}`}>
             {label}
@@ -2885,11 +2943,11 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
             </select>
           </>
         )}
-        {(report === "quote_so" || report === "projects" || report === "voids" || report === "ageing") && (
+        {(report === "quote_so" || report === "projects" || report === "voids" || report === "ageing" || report === "items") && (
           <div className="relative flex-1 min-w-[180px]">
             <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
             <input value={search} onChange={e => setSearch(e.target.value)}
-              placeholder={report === "projects" ? "Search project or client…" : report === "voids" ? "Search void SO, customer, project…" : report === "ageing" ? "Search invoice #, customer…" : "Search quote #, customer, SO…"}
+              placeholder={report === "projects" ? "Search project or client…" : report === "voids" ? "Search void SO, customer, project…" : report === "ageing" ? "Search invoice #, customer…" : report === "items" ? "Search item…" : "Search quote #, customer, SO…"}
               className="w-full pl-9 pr-4 py-1.5 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-black transition" />
             {search && <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-black text-lg">×</button>}
           </div>
@@ -3135,6 +3193,64 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
                 <span className="inline-flex items-center gap-1.5 text-xs"><span className="w-2 h-2 rounded-sm" style={{ background: b?.color }} />{r.bucket}</span>,
               ];
             })} empty="No open invoices for this filter" />
+        </div>
+      )}
+
+      {report === "items" && (
+        <div className="space-y-5">
+          {invoiceItems.length === 0 && (
+            <div className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              ⚠ Item-level sales not synced yet. Click <b>Sync Zoho</b> — invoice line items are pulled during the detail enrichment passes.
+            </div>
+          )}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Card label="Distinct Items" value={String(itemAgg.size)} />
+            <Card label="Units Sold" value={itemsTotalQty.toLocaleString("en-IN")} color="text-blue-600" />
+            <Card label="Items Value" value={inr(itemsTotalVal)} color="text-violet-600" />
+            <Card label="Top Item" value={topItems[0]?.name || "—"} sub={topItems[0] ? `${topItems[0].qty.toLocaleString("en-IN")} units` : ""} color="text-emerald-600" />
+          </div>
+
+          <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm space-y-3">
+            <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1">Top 10 Items by Quantity Sold</p>
+            {topItems.map((e, i) => {
+              const pct = itemsTotalQty ? (e.qty / itemsTotalQty) * 100 : 0;
+              return (
+                <div key={i} className="flex items-center gap-3">
+                  <span className="text-xs text-zinc-400 w-5 fin-num">{i + 1}</span>
+                  <span className="text-sm text-zinc-700 w-56 truncate" title={e.name}>{e.name}</span>
+                  <div className="flex-1"><MiniBar value={e.qty} max={maxItemQty} color="#7c3aed" /></div>
+                  <span className="text-sm font-semibold fin-num w-20 text-right">{e.qty.toLocaleString("en-IN")}</span>
+                  <span className="text-xs text-zinc-400 fin-num w-24 text-right">{inr(e.amount)}</span>
+                  <span className="text-xs text-zinc-400 fin-num w-12 text-right">{pct.toFixed(1)}%</span>
+                </div>
+              );
+            })}
+            {!topItems.length && <p className="text-zinc-400 text-sm py-6 text-center">No items — sync from Zoho</p>}
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">Best-Selling Item Each Month (by qty)</p>
+            <Table cols={["Month", "Top Item", "Qty Sold", "Value"]}
+              rows={monthlyTopItems.map(m => [
+                <span className="text-zinc-600">{new Date(m.month + "-01").toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</span>,
+                <span className="font-medium text-zinc-800">{m.name}</span>,
+                <span className="font-semibold">{m.qty.toLocaleString("en-IN")}</span>,
+                <span className="text-zinc-500">{inr(m.amount)}</span>,
+              ])} empty="No items for this period" />
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">All Items ({itemsRanked.length})</p>
+            <Table cols={["Rank", "Item", "Qty Sold", "Value", "% of qty", "Invoices"]}
+              rows={itemsRanked.map((e, i) => [
+                <span className="text-zinc-400 fin-num">{i + 1}</span>,
+                <span className="text-zinc-700">{e.name}</span>,
+                <span className="font-semibold">{e.qty.toLocaleString("en-IN")}</span>,
+                <span className="text-zinc-600">{inr(e.amount)}</span>,
+                <span className="text-zinc-400">{itemsTotalQty ? (e.qty / itemsTotalQty * 100).toFixed(1) : 0}%</span>,
+                <span className="text-zinc-400 fin-num">{e.invCount}</span>,
+              ])} empty="No items for this filter" />
+          </div>
         </div>
       )}
 

@@ -2584,7 +2584,7 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
   const [salesOrders, setSalesOrders] = useState<(SalesOrder & { project_name?: string | null })[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
-  const [report, setReport] = useState<"quote_so" | "projects" | "revenue" | "customers" | "ageing">("quote_so");
+  const [report, setReport] = useState<"quote_so" | "projects" | "revenue" | "customers" | "ageing" | "voids">("quote_so");
   const [search, setSearch] = useState("");
   const [fy, setFy] = useState("All");
   const [month, setMonth] = useState("All");
@@ -2741,7 +2741,7 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
     <div className="space-y-5">
       {/* Report switch */}
       <div className="flex gap-2 flex-wrap">
-        {([["quote_so", "Quote → Sales Order"], ["projects", "Project Summary"], ["revenue", "Revenue Trend"], ["customers", "Top Customers"], ["ageing", "Receivables Ageing"]] as const).map(([k, label]) => (
+        {([["quote_so", "Quote → Sales Order"], ["projects", "Project Summary"], ["revenue", "Revenue Trend"], ["customers", "Top Customers"], ["ageing", "Receivables Ageing"], ["voids", "Void SOs"]] as const).map(([k, label]) => (
           <button key={k} onClick={() => setReport(k)}
             className={`text-sm px-4 py-2 rounded-lg border transition ${report === k ? "bg-black text-white border-black" : "border-zinc-200 text-zinc-600 hover:bg-zinc-50"}`}>
             {label}
@@ -2920,6 +2920,41 @@ function AnalyticsModule({ orgId, clientName }: { orgId: string; clientName: str
           </div>
         </div>
       )}
+
+      {report === "voids" && (() => {
+        const rows = filterByFYMonth(voidSOs, fy, month)
+          .filter(so => !search || `${so.salesorder_number} ${so.customer_name} ${so.project_name || ""}`.toLowerCase().includes(search.toLowerCase()))
+          .sort((a, b) => (b.total || 0) - (a.total || 0));
+        const shownVal = rows.reduce((s, so) => s + (so.total || 0), 0);
+        return (
+          <div className="space-y-5">
+            <div className="text-xs text-zinc-500 bg-zinc-50 border border-zinc-200 rounded-lg px-3 py-2">
+              Void (cancelled) sales orders. These are <b>excluded</b> from all other reports — listed here for audit only.
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              <Card label="Void SOs" value={String(voidSOs.length)} color="text-red-600" />
+              <Card label="Void Value" value={inr(voidVal)} color="text-red-600" />
+              <Card label="Showing" value={String(rows.length)} sub={inr(shownVal)} />
+            </div>
+            <div className="relative">
+              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search void SO #, customer, project…"
+                className="w-full pl-9 pr-4 py-2.5 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-black transition" />
+              {search && <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-black text-lg">×</button>}
+            </div>
+            <Table cols={["SO #", "Project", "Customer", "Date", "Taxable", "GST", "Total"]}
+              rows={rows.map(so => [
+                <span className="font-mono text-xs text-zinc-500">{so.salesorder_number}</span>,
+                <span className="text-zinc-600">{so.project_name || "—"}</span>,
+                so.customer_name,
+                fdate(so.date),
+                <span className="text-zinc-600">{inr(so.sub_total || 0)}</span>,
+                (so.tax_total || 0) > 0 ? <span className="text-blue-600">{inr(so.tax_total)}</span> : <span className="text-zinc-300">—</span>,
+                <span className="font-semibold text-zinc-500 line-through">{inr(so.total || 0)}</span>,
+              ])} empty="No void sales orders 🎉" />
+          </div>
+        );
+      })()}
     </div>
   );
 }

@@ -14,6 +14,25 @@ const ACCOUNT_B_ORGS = ["60027611420"];
 
 async function getAccessToken(orgId: string): Promise<string> {
   const isAccountA = ACCOUNT_A_ORGS.includes(orgId);
+  const account = isAccountA ? "A" : "B";
+  const sbUrl = Deno.env.get("APP_SUPABASE_URL")!;
+  const sbKey = Deno.env.get("APP_SERVICE_ROLE_KEY")!;
+  const sbHeaders = { apikey: sbKey, Authorization: `Bearer ${sbKey}`, "Content-Type": "application/json" };
+
+  // 1. Reuse a cached, still-valid access token (Zoho tokens last ~1h). This is
+  //    essential because the token endpoint is heavily rate-limited and the sync
+  //    runs many passes — refreshing each time triggers "too many requests".
+  try {
+    const cRes = await fetch(`${sbUrl}/rest/v1/zoho_tokens?account=eq.${account}&select=access_token,expires_at`, { headers: sbHeaders });
+    if (cRes.ok) {
+      const rows = await cRes.json();
+      if (Array.isArray(rows) && rows[0] && new Date(rows[0].expires_at).getTime() > Date.now() + 60000) {
+        return rows[0].access_token;
+      }
+    }
+  } catch { /* fall through to refresh */ }
+
+  // 2. Refresh from Zoho
   const client_id     = isAccountA ? "1000.9ESMXKQDYSF2DQHEP8B4B4NINJXV2W" : Deno.env.get("ZOHO_CLIENT_ID")!;
   const client_secret = isAccountA ? Deno.env.get("ZOHO_CLIENT_SECRET_A")!   : Deno.env.get("ZOHO_CLIENT_SECRET")!;
   const refresh_token = isAccountA ? Deno.env.get("ZOHO_REFRESH_TOKEN_A")!   : Deno.env.get("ZOHO_REFRESH_TOKEN")!;
@@ -25,6 +44,17 @@ async function getAccessToken(orgId: string): Promise<string> {
   });
   const d = await res.json();
   if (!d.access_token) throw new Error(`Token refresh failed for org ${orgId}: ${JSON.stringify(d)}`);
+
+  // 3. Cache it (expire 5 min early for safety)
+  const expiresAt = new Date(Date.now() + ((Number(d.expires_in) || 3600) - 300) * 1000).toISOString();
+  try {
+    await fetch(`${sbUrl}/rest/v1/zoho_tokens`, {
+      method: "POST",
+      headers: { ...sbHeaders, Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify({ account, access_token: d.access_token, expires_at: expiresAt }),
+    });
+  } catch { /* caching is best-effort */ }
+
   return d.access_token;
 }
 

@@ -2556,6 +2556,7 @@ function ClientModule({ client, onBack }: { client: Client; onBack: () => void }
         const r = await call({ phase: "enrich" });
         if (!r.success) { setSyncMsg(`✗ ${r.error || "Failed"}`); setSyncing(false); return; }
         done = !r.more;
+        if (!done) await new Promise(res => setTimeout(res, 1000)); // gentle pacing
       }
       setSyncMsg(`✓ Synced ${list.total_records} records`);
     } catch (e: any) { setSyncMsg(`✗ ${e.message}`); }

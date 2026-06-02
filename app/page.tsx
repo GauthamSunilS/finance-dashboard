@@ -1806,6 +1806,7 @@ function AuditModule({ orgId, initSection = "" }: { orgId: string; initSection?:
       {section === "gst" && (() => {
         const filtInv = filterByFYMonth(invoices, fy, month);
         const filtExp = filterByFYMonth(expenses, fy, month);
+        const filtBill = filterByFYMonth(bills, fy, month);
         const monthData: Record<string, { output: number; input: number; blocked: number; b2b: number; b2c: number; invCount: number; expCount: number }> = {};
         for (const inv of filtInv) {
           const m = inv.date?.slice(0, 7) || "unknown";
@@ -1819,6 +1820,13 @@ function AuditModule({ orgId, initSection = "" }: { orgId: string; initSection?:
           if (!monthData[m]) monthData[m] = { output: 0, input: 0, blocked: 0, b2b: 0, b2c: 0, invCount: 0, expCount: 0 };
           if (isBlocked(exp.account_name || "", exp.vendor_name || "")) monthData[m].blocked += (exp.tax_total || 0);
           else monthData[m].input += (exp.tax_total || 0);
+          monthData[m].expCount++;
+        }
+        for (const bill of filtBill) {
+          const m = bill.date?.slice(0, 7) || "unknown";
+          if (!monthData[m]) monthData[m] = { output: 0, input: 0, blocked: 0, b2b: 0, b2c: 0, invCount: 0, expCount: 0 };
+          if (isBlocked("", bill.vendor_name || "")) monthData[m].blocked += (bill.tax_total || 0);
+          else monthData[m].input += (bill.tax_total || 0);
           monthData[m].expCount++;
         }
         const rows = Object.entries(monthData).sort((a, b) => b[0].localeCompare(a[0]));
